@@ -116,14 +116,16 @@ export function stepBattle(state: GameState, b: Battle, dt: number): void {
   for (let i = 0; i < 2; i++) {
     const enemies = lists[1 - i];
     const front = enemies.filter((q) => !UNITS[q.unit].ranged);
+    const back = enemies.filter((q) => UNITS[q.unit].ranged);
     let meleeIdx = 0;
+    let cavIdx = 0;
     for (const sq of lists[i]) {
       const u = UNITS[sq.unit];
       const men = menOf(sq);
       if (men <= 0) continue;
       if (wallsUp && i !== di && !u.ranged) {
         // Los asaltantes cuerpo a cuerpo golpean la muralla.
-        wallDmg += men * WALL_DMG * dt * (u.role === 'pesada' ? 1.5 : 1);
+        wallDmg += men * WALL_DMG * dt * u.wallDmg;
         continue;
       }
       let pool: Squad[];
@@ -131,13 +133,17 @@ export function stepBattle(state: GameState, b: Battle, dt: number): void {
       if (u.ranged) {
         pool = enemies;
         idx = (sq.id * 7 + Math.floor(b.time / 3)) % pool.length;
+      } else if (u.role === 'caballeria' && back.length && !(sett && i === di)) {
+        // La caballería flanquea y busca a los tiradores.
+        pool = back;
+        idx = (cavIdx++ + sq.id) % pool.length;
       } else {
         pool = front.length ? front : enemies;
         idx = meleeIdx++ % pool.length;
       }
       const tgt = pool[idx];
       const tu = UNITS[tgt.unit];
-      let a = men * u.atk * DMG_K * dt;
+      let a = men * u.atk * DMG_K * dt * (u.vs[tu.role] ?? 1);
       if (wallsUp && i === di) a *= u.ranged ? WALL_RANGED_BONUS : WALL_MELEE_DEF;
       acc.set(tgt, (acc.get(tgt) ?? 0) + a / (tu.def * mul[1 - i]));
       killer.set(tgt, i);

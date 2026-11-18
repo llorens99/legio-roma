@@ -1,6 +1,6 @@
 import { runAi } from './ai';
 import { armyS, joinBattle, MEET_DIST, removeArmy, startFieldBattle, startSiege, stepBattle } from './combat';
-import { armySpeed, newSquad, TICK } from './game';
+import { armySpeed, FOOD_CAP, foodBalance, newSquad, TICK } from './game';
 import { roadBetween } from './path';
 import type { Army, GameState } from './types';
 import { KINDS, maxHp, UNITS } from './units';
@@ -13,6 +13,7 @@ export function step(state: GameState, dt: number = TICK): void {
   state.time += dt;
   state.tick++;
   economy(state, dt);
+  food(state, dt);
   recruiting(state, dt);
   replenish(state, dt);
   moveArmies(state, dt);
@@ -34,6 +35,39 @@ function economy(state: GameState, dt: number): void {
   }
 }
 
+/** Hombres por segundo que desertan, en fracción de la escuadra, cuando falta comida. */
+export const DESERTION = 0.012;
+
+function food(state: GameState, dt: number): void {
+  for (const f of state.factions) {
+    if (f.id === 0 || !f.alive) continue;
+    const { prod, upkeep } = foodBalance(state, f.id);
+    f.food = Math.min(FOOD_CAP, f.food + (prod - upkeep) * dt);
+    if (f.food <= 0) {
+      f.food = 0;
+      if (!f.starving) {
+        f.starving = true;
+        state.events.push({ type: 'starving', faction: f.id });
+      }
+    } else if (f.starving && f.food > 20) f.starving = false;
+    if (!f.starving) continue;
+    const hurt = (q: { unit: string; hp: number }) => (q.hp -= maxHp(q.unit) * DESERTION * dt);
+    for (const s of state.settlements) {
+      if (s.owner !== f.id) continue;
+      s.garrison.forEach(hurt);
+      if (s.battleId === null) s.garrison = s.garrison.filter((q) => q.hp > 0.01);
+    }
+    for (const a of state.armies.slice()) {
+      if (a.owner !== f.id) continue;
+      a.squads.forEach(hurt);
+      if (a.battleId === null) {
+        a.squads = a.squads.filter((q) => q.hp > 0.01);
+        if (!a.squads.length) removeArmy(state, a.id);
+      }
+    }
+  }
+}
+
 function recruiting(state: GameState, dt: number): void {
   for (const s of state.settlements) {
     if (s.owner === 0 || s.queue.length === 0) continue;
@@ -51,6 +85,7 @@ function recruiting(state: GameState, dt: number): void {
 function replenish(state: GameState, dt: number): void {
   for (const s of state.settlements) {
     if (s.battleId !== null || s.garrison.length === 0) continue;
+    if (s.owner !== 0 && state.factions[s.owner].starving) continue;
     const k = KINDS[s.kind];
     let worst = null as null | (typeof s.garrison)[number];
     let worstR = 0.999;

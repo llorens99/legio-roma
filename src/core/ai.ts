@@ -1,4 +1,4 @@
-import { recruit, sendArmy } from './game';
+import { foodBalance, recruit, redirectArmy, sendArmy } from './game';
 import { distancesFrom, neighbors } from './path';
 import { nextRandom } from './rng';
 import type { Faction, GameState, Settlement, Squad, UnitRole } from './types';
@@ -11,9 +11,9 @@ export interface AiParams {
   margin: number;
   /** Fracción de la guarnición de la fortaleza que guarda. */
   reserve: number;
-  /** Proporción deseada [básica, tiradores, pesada]. */
-  mix: [number, number, number];
-  /** No recluta pesada hasta este minuto de partida (s). */
+  /** Proporción deseada [básica, tiradores, pesada, caballería]. */
+  mix: [number, number, number, number];
+  /** No recluta pesada ni caballería hasta este momento de la partida (s). */
   heavyAfter: number;
   /** Escuadras mínimas para lanzar un ataque. */
   minSend: number;
@@ -26,17 +26,29 @@ export interface AiParams {
   /** Cuánto de la amenaza cercana cubre con la guarnición de la fortaleza. */
   guard: number;
   guardRadius: number;
+  /** Vigila la comida antes de reclutar. */
+  foodAware: boolean;
+  /** Ajusta la mezcla de tropas a lo que tiene el enemigo. */
+  counter: boolean;
+  /** Reúne tropas de varias plazas para un mismo ataque. */
+  combine: boolean;
+  /** Hace volver a los ejércitos en marcha si la fortaleza está amenazada. */
+  recall: boolean;
 }
 
+const NORMAL: AiParams = { interval: 2, margin: 1.5, reserve: 0.5, mix: [0.4, 0.27, 0.2, 0.13], heavyAfter: 120, minSend: 2, consolidate: true, relieve: true, reach: 650, guard: 0.9, guardRadius: 500, foodAware: true, counter: false, combine: true, recall: true };
+
 export const AI_PARAMS: Record<string, AiParams> = {
-  // Fácil: decide despacio, no trae refuerzos, deja la fortaleza floja y apenas usa tropas de élite.
-  facil: { interval: 5, margin: 1.3, reserve: 0.25, mix: [0.65, 0.3, 0.05], heavyAfter: 600, minSend: 3, consolidate: false, relieve: false, reach: 450, guard: 0.3, guardRadius: 350 },
-  normal: { interval: 2, margin: 1.5, reserve: 0.5, mix: [0.45, 0.3, 0.25], heavyAfter: 120, minSend: 2, consolidate: true, relieve: true, reach: 650, guard: 0.9, guardRadius: 500 },
-  // Sustituto del jugador humano para las simulaciones de equilibrio.
-  jugador: { interval: 2, margin: 1.5, reserve: 0.5, mix: [0.45, 0.3, 0.25], heavyAfter: 120, minSend: 2, consolidate: true, relieve: true, reach: 650, guard: 0.9, guardRadius: 500 },
+  // Fácil: decide despacio, no trae refuerzos, deja la fortaleza floja, no usa élite ni caballería y no vigila la comida.
+  facil: { interval: 5, margin: 1.3, reserve: 0.25, mix: [0.65, 0.3, 0.05, 0], heavyAfter: 600, minSend: 3, consolidate: false, relieve: false, reach: 450, guard: 0.3, guardRadius: 350, foodAware: false, counter: false, combine: false, recall: false },
+  normal: NORMAL,
+  // Difícil: no se estira (ataca solo cerca de su frente) y no lanza ataques con escuadras sueltas.
+  dificil: { ...NORMAL, reach: 550, minSend: 3 },
+  // Sustituto del jugador humano para las simulaciones de equilibrio (juega como la IA normal).
+  jugador: { ...NORMAL },
 };
 
-const ROLES: UnitRole[] = ['basica', 'tiradores', 'pesada'];
+const ROLES: UnitRole[] = ['basica', 'tiradores', 'pesada', 'caballeria'];
 
 export function runAi(state: GameState, dt: number): void {
   for (const f of state.factions) {
@@ -94,35 +106,73 @@ export function think(state: GameState, f: Faction, P: AiParams): void {
   if (own.length === 0) return;
 
   // 1. Reclutar según la mezcla deseada.
-  const counts = [0, 0, 0];
-  const countSquads = (sq: { unit: string }[]) => {
-    for (const q of sq) counts[ROLES.indexOf(UNITS[q.unit].role)]++;
+  const counts = [0, 0, 0, 0];
+  const countSquads = (sq: { unit: string }[], into = counts) => {
+    for (const q of sq) into[ROLES.indexOf(UNITS[q.unit].role)]++;
   };
   for (const s of own) {
     countSquads(s.garrison);
     countSquads(s.queue);
   }
   for (const a of state.armies) if (a.owner === f.id) countSquads(a.squads);
+  let mix = P.mix.slice();
+  if (P.counter) {
+    const enemy = [0, 0, 0, 0];
+    for (const s of state.settlements) if (s.owner !== f.id && s.owner !== 0) countSquads(s.garrison, enemy);
+    for (const a of state.armies) if (a.owner !== f.id) countSquads(a.squads, enemy);
+    const tot = enemy.reduce((x, y) => x + y, 0) || 1;
+    const e = enemy.map((x) => x / tot);
+    mix[3] += 0.35 * e[1]; // contra tiradores, caballería
+    mix[2] += 0.35 * e[3]; // contra caballería, pesada (lanzas)
+    mix[0] += 0.15 * e[3];
+    mix[1] += 0.3 * e[2]; // contra pesada, tiradores
+    const sum = mix.reduce((x, y) => x + y, 0);
+    mix = mix.map((x) => x / sum);
+  }
+  let { prod, upkeep } = foodBalance(state, f.id);
   const sorted = own.slice().sort((a, b) => KINDS[b.kind].value - KINDS[a.kind].value);
   for (const s of sorted) {
     if (s.kind === 'fortin') continue;
     let guard = 0;
     while (s.queue.length < 2 && guard++ < 3) {
-      const total = counts[0] + counts[1] + counts[2] + 1;
+      const total = counts.reduce((x, y) => x + y, 0) + 1;
       let best = 0;
       let bestNeed = -Infinity;
-      for (let r = 0; r < 3; r++) {
-        const need = P.mix[r] * total - counts[r];
+      for (let r = 0; r < 4; r++) {
+        const need = mix[r] * total - counts[r];
         if (need > bestNeed) {
           bestNeed = need;
           best = r;
         }
       }
       let role = ROLES[best];
-      if (role === 'pesada' && (s.kind !== 'fortaleza' || state.time < P.heavyAfter)) role = 'basica';
+      if ((role === 'pesada' || role === 'caballeria') && (s.kind !== 'fortaleza' || state.time < P.heavyAfter)) role = 'basica';
       const u = unitFor(f.culture, role);
+      const extra = u.upkeep * u.men;
+      if (P.foodAware && prod - upkeep - extra < -0.1 && f.food < 120 + extra * 200) break;
       if (!recruit(state, f.id, s.id, u.key).ok) break;
-      counts[ROLES.indexOf(role)]++;
+      upkeep += extra;
+      counts[ROLES.indexOf(u.role)]++;
+    }
+  }
+
+  // 1b. Volver a casa si la fortaleza está amenazada.
+  if (P.recall) {
+    for (const fort of own) {
+      if (fort.kind !== 'fortaleza') continue;
+      const threat = incomingPower(state, fort.id, f.id, false);
+      if (threat === 0) continue;
+      let def = defenseOf(fort) + incomingPower(state, fort.id, f.id, true) * wallMul(fort);
+      if (def >= threat * 1.2) continue;
+      const dist = distancesFrom(state, fort.id);
+      const mine = state.armies
+        .filter((a) => a.owner === f.id && a.battleId === null && dist[a.toNode] < 700)
+        .filter((a) => (a.path.length ? a.path[a.path.length - 1] : a.toNode) !== fort.id)
+        .sort((a, b) => dist[a.toNode] - dist[b.toNode]);
+      for (const a of mine) {
+        if (def >= threat * 1.2) break;
+        if (redirectArmy(state, f.id, a.id, fort.id).ok) def += power(a.squads) * wallMul(fort);
+      }
     }
   }
 
@@ -150,6 +200,7 @@ export function think(state: GameState, f: Faction, P: AiParams): void {
   }
 
   // 3. Atacar.
+  const pool: { s: Settlement; avail: Squad[]; dist: number[] }[] = [];
   for (const s of own) {
     if (s.battleId !== null || s.garrison.length === 0) continue;
     const keep = keepFor(state, s, P);
@@ -175,13 +226,40 @@ export function think(state: GameState, f: Faction, P: AiParams): void {
       }
     }
     if (best) sendArmy(state, f.id, s.id, best.id, avail.map((q) => q.id));
+    else if (P.combine) pool.push({ s, avail, dist });
+  }
+
+  // 3b. Ataque coordinado desde varias plazas.
+  if (P.combine && pool.length >= 2) {
+    let best: Settlement | null = null;
+    let bestScore = 0;
+    let bestFrom: typeof pool = [];
+    for (const t of state.settlements) {
+      if (t.owner === f.id) continue;
+      const from = pool.filter((p) => p.dist[t.id] <= P.reach);
+      if (from.length < 2) continue;
+      const sum = from.reduce((x, p) => x + power(p.avail), 0);
+      const enemy = t.owner !== 0;
+      const need = (defenseOf(t) + incomingPower(state, t.id, t.owner, true) * wallMul(t)) * (enemy ? 1.2 : 1);
+      if (sum + incomingPower(state, t.id, f.id, true) < need * P.margin * 1.1 + 0.5) continue;
+      let value = KINDS[t.kind].value * (enemy ? 1.4 : 1);
+      if (enemy && t.kind === 'fortaleza') value *= 2.5;
+      const far = Math.max(...from.map((p) => p.dist[t.id]));
+      const score = value / (1 + far / 300) / (1 + need / 12);
+      if (score > bestScore) {
+        bestScore = score;
+        best = t;
+        bestFrom = from;
+      }
+    }
+    if (best) for (const p of bestFrom) sendArmy(state, f.id, p.s.id, best.id, p.avail.map((q) => q.id));
   }
 
   // 4. Llevar tropas de la retaguardia al frente.
   if (P.consolidate) {
     const frontier = own.filter((s) => isFrontier(state, s));
     if (frontier.length === 0) return;
-    const enemyFort = state.settlements.find((s) => s.kind === 'fortaleza' && s.owner !== f.id && s.owner !== 0);
+    const enemyForts = state.settlements.filter((s) => s.kind === 'fortaleza' && s.owner !== f.id && s.owner !== 0);
     for (const s of own) {
       if (s.battleId !== null || frontier.includes(s) || s.garrison.length < 2) continue;
       const keep = s.kind === 'fortaleza' ? keepFor(state, s, P) : 0;
@@ -192,7 +270,7 @@ export function think(state: GameState, f: Faction, P: AiParams): void {
       let bestD = Infinity;
       for (const fr of frontier) {
         let d = dist[fr.id];
-        if (enemyFort) d += Math.hypot(fr.x - enemyFort.x, fr.y - enemyFort.y) * 0.5;
+        if (enemyForts.length) d += Math.min(...enemyForts.map((e) => Math.hypot(fr.x - e.x, fr.y - e.y))) * 0.5;
         if (d < bestD) {
           bestD = d;
           target = fr;

@@ -1,4 +1,4 @@
-import { SAVE_VERSION } from './game';
+import { SAVE_VERSION, START_FOOD } from './game';
 import type { GameState } from './types';
 
 export function serialize(state: GameState): string {
@@ -19,8 +19,14 @@ export function deserialize(text: string | null): GameState | null {
 export function migrate(raw: any): GameState | null {
   if (!raw || typeof raw !== 'object' || typeof raw.version !== 'number') return null;
   if (raw.version > SAVE_VERSION) return null;
-  // v1 es la primera versión; aquí irán los pasos v1→v2, v2→v3…
   if (!Array.isArray(raw.settlements) || !Array.isArray(raw.factions)) return null;
+  // v1 → v2: comida y hambre.
+  if (raw.version < 2) {
+    for (const f of raw.factions) {
+      f.food = f.id === 0 ? 0 : START_FOOD;
+      f.starving = false;
+    }
+  }
   raw.events = [];
   raw.version = SAVE_VERSION;
   return raw as GameState;

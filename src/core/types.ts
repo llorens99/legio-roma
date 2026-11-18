@@ -1,9 +1,9 @@
 // Tipos del núcleo. Todo es serializable a JSON (sin clases ni funciones).
 
-export type Culture = 'roma' | 'galos' | 'independientes';
-export type UnitRole = 'basica' | 'tiradores' | 'pesada';
+export type Culture = 'roma' | 'galos' | 'cartago' | 'independientes';
+export type UnitRole = 'basica' | 'tiradores' | 'pesada' | 'caballeria';
 export type SettlementKind = 'fortaleza' | 'aldea' | 'fortin';
-export type Difficulty = 'facil' | 'normal';
+export type Difficulty = 'facil' | 'normal' | 'dificil';
 
 export interface UnitDef {
   key: string;
@@ -24,6 +24,12 @@ export interface UnitDef {
   /** Hombres por escuadra (y población que consume). */
   men: number;
   onlyFortress: boolean;
+  /** Comida por hombre y segundo. */
+  upkeep: number;
+  /** Multiplicador de daño contra cada papel (piedra-papel-tijera). */
+  vs: Partial<Record<UnitRole, number>>;
+  /** Multiplicador de daño contra murallas. */
+  wallDmg: number;
   desc: string;
 }
 
@@ -117,6 +123,9 @@ export interface Faction {
   culture: Culture;
   color: string;
   gold: number;
+  food: number;
+  /** Sin comida: las tropas desertan y no se puede reclutar. */
+  starving: boolean;
   isPlayer: boolean;
   alive: boolean;
   /** Parámetros de IA (null = jugador humano o neutral). */
@@ -133,6 +142,7 @@ export type GameEvent =
   | { type: 'breach'; settlement: number }
   | { type: 'field-win'; battle: number; faction: number; loser: number; x: number; y: number }
   | { type: 'eliminated'; faction: number }
+  | { type: 'starving'; faction: number }
   | { type: 'victory'; faction: number };
 
 export interface GameState {
