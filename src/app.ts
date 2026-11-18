@@ -1,10 +1,11 @@
 import { initAudio, isMuted, resumeAudio, setMuted, sfx, suspendAudio } from './audio';
-import { cancelRecruit, canRecruit, CULTURE_NAMES, defaultPlayers, factionNames, disband, foodBalance, incomeOf, newGame, recruit, redirectArmy, routeFor, sendArmy, TICK } from './core/game';
+import { appointGeneral, canAppointGeneral, canUpgrade, GENERAL_COST, startUpgrade, cancelRecruit, canRecruit, CULTURE_NAMES, defaultPlayers, factionNames, disband, foodBalance, incomeOf, newGame, recruit, redirectArmy, routeFor, sendArmy, TICK } from './core/game';
 import { MAPS } from './core/maps';
 import { distancesFrom } from './core/path';
 import { step } from './core/sim';
-import type { GameEvent, GameState, Settlement, Squad } from './core/types';
-import { KINDS, maxHp, menOf, recruitable, totalMen, UNITS } from './core/units';
+import type { Build, GameEvent, GameState, General, Settlement, Squad } from './core/types';
+import { orderRetreat } from './core/combat';
+import { ALDEA_BUILDINGS, maxHp, menOf, recruitable, statsOf, totalMen, UNITS, upgradeOptions } from './core/units';
 import { Gestures } from './input';
 import { Camera } from './render/camera';
 import { Renderer, type ViewState } from './render/renderer';
@@ -47,6 +48,16 @@ function unitIcon(unit: string, color: string): string {
   return u;
 }
 
+function levelTag(st: Settlement): string {
+  if (st.kind === 'aldea') return st.building ? ` · ${ALDEA_BUILDINGS[st.building].name.toUpperCase()}` : '';
+  return st.level > 1 ? ` ${'★'.repeat(st.level)}` : '';
+}
+
+function buildName(what: Build['what'], st: Settlement): string {
+  if (what === 'nivel') return st.kind === 'fortaleza' ? `nivel ${st.level + 1}` : 'refuerzo';
+  return ALDEA_BUILDINGS[what].name;
+}
+
 function fmtTime(sec: number): string {
   const m = Math.floor(sec / 60);
   const s = Math.floor(sec % 60);
@@ -74,6 +85,8 @@ export class App {
   sheetOpenedAt = 0;
   /** Primer toque en «Licenciar» pide confirmación. */
   disbandArmed = false;
+  /** General elegido para acompañar al próximo ejército. */
+  genSel: number | null = null;
   /** Destino suave de la cámara. */
   camGoal: { x: number; y: number } | null = null;
   settings: Settings = loadSettings();
@@ -309,6 +322,28 @@ export class App {
           this.toast('Tu ejército ha sido derrotado', 'bad', e);
         }
         break;
+      case 'upgraded':
+        if (e.faction === p) {
+          sfx.capture();
+          const st = s.settlements[e.settlement];
+          this.toast(e.what === 'nivel' ? `${esc(st.name)} sube a nivel ${st.level}` : `${esc(buildName(e.what as Build['what'], st))} terminado en ${esc(st.name)}`, 'good', st);
+          if (this.view.selected?.kind === 'settlement' && this.view.selected.id === e.settlement) this.sheetSig = '';
+        }
+        break;
+      case 'rout':
+        if (e.faction === p) this.toast(e.ordered ? 'Retirada ordenada' : '¡Tu ejército pierde la moral y huye!', e.ordered ? '' : 'bad', e);
+        else if ([...this.renderer.armyFront.entries()].some(([id, pt]) => s.armies.find((x) => x.id === id)?.owner === p && Math.hypot(pt.x - e.x, pt.y - e.y) < 90))
+          this.toast('¡El enemigo huye!', 'good', e);
+        break;
+      case 'general-died':
+        if (e.faction === p) {
+          sfx.lost();
+          this.toast(`Ha caído el general ${esc(e.name)}`, 'bad');
+        } else if (e.faction !== 0) this.toast(`Ha caído ${esc(e.name)}, general de ${esc(s.factions[e.faction].name)}`, 'good');
+        break;
+      case 'general-level':
+        if (e.faction === p) this.toast(`${esc(e.name)} asciende a nivel ${e.level}`, 'good');
+        break;
       case 'starving':
         if (e.faction === p) {
           sfx.lost();
@@ -389,6 +424,7 @@ export class App {
       this.view.selected = { kind: 'settlement', id: hitS };
       this.view.targeting = false;
       this.excluded.clear();
+      this.genSel = null;
       this.openSheet(s.settlements[hitS].owner === p ? 'settlement' : 'info');
       if (this.settings.tipsDone === 0 && s.settlements[hitS].owner === p) this.advanceTip(1);
       return;
@@ -420,7 +456,8 @@ export class App {
       const st = s.settlements[sel.id];
       const ids = this.sendSquads(st);
       const men = totalMen(st.garrison.filter((q) => ids.includes(q.id)));
-      const r = sendArmy(s, p, sel.id, target, ids);
+      const r = sendArmy(s, p, sel.id, target, ids, this.genSel ?? undefined);
+      if (r.ok) this.genSel = null;
       if (!r.ok) {
         sfx.deny();
         this.toast(r.reason, 'bad');
@@ -556,19 +593,25 @@ export class App {
     } else if (this.mode === 'settlement' && sel?.kind === 'settlement') {
       el.classList.remove('slim');
       const st = s.settlements[sel.id];
-      const k = KINDS[st.kind];
+      const k = statsOf(st);
       const f = s.factions[p];
-      const units = recruitable(f.culture, st.kind);
+      const units = recruitable(f.culture, st.kind, st.level);
       const can = units.map((u) => canRecruit(s, p, st.id, u.key));
+      const ups = upgradeOptions(st);
+      const canUp = ups.map((o) => canUpgrade(s, p, st.id, o.what));
+      const canGen = st.kind === 'fortaleza' ? canAppointGeneral(s, p, st.id) : null;
+      if (this.genSel !== null && !st.generals.some((g) => g.id === this.genSel)) this.genSel = null;
       sig = [
         's', st.id, st.garrison.map((q) => `${q.id}:${menOf(q)}:${Math.round((q.hp / maxHp(q.unit)) * 10)}`).join(','),
         st.queue.map((q) => q.unit).join(','), [...this.excluded].join(','), can.map((c) => (c.ok ? 1 : c.reason)).join(','),
         Math.floor(st.pop / 5), Math.round((st.walls / k.wallHp) * 20), st.battleId, f.starving, this.disbandArmed,
+        st.level, st.building, st.build?.what, canUp.map((c) => (c.ok ? 1 : c.reason)).join(','), canGen ? (canGen.ok ? 1 : canGen.reason) : '',
+        st.generals.map((g) => `${g.id}:${g.level}`).join(','), this.genSel,
       ].join('|');
       const selMen = totalMen(st.garrison.filter((q) => !this.excluded.has(q.id)));
       const allSel = st.garrison.every((q) => !this.excluded.has(q.id));
       html = `
-        <div class="sh-head"><h2>${esc(st.name)}<span class="kind">${k.name}${st.battleId !== null ? ' · ASEDIADA' : ''}</span></h2><button class="close" data-act="close">×</button></div>
+        <div class="sh-head"><h2>${esc(st.name)}<span class="kind">${k.name}${levelTag(st)}${st.battleId !== null ? ' · ASEDIADA' : ''}</span></h2><button class="close" data-act="close">×</button></div>
         <div class="stats">
           ${k.popMax ? `<span>Población <b>${Math.floor(st.pop)}/${k.popMax}</b></span>` : ''}
           <span>Muralla <b>${Math.round((st.walls / k.wallHp) * 100)} %</b></span>
@@ -577,7 +620,8 @@ export class App {
           ${k.towers ? `<span>Torres <b>${k.towers}</b></span>` : ''}
         </div>
         <div class="sec">GUARNICIÓN · ${totalMen(st.garrison)}<span class="grow"></span>${st.garrison.length ? `<button data-act="all">${allSel ? 'Ninguna' : 'Todas'}</button>` : ''}</div>
-        <div class="chips">${st.garrison.length ? st.garrison.map((q) => this.chip(q, color, !this.excluded.has(q.id), true)).join('') : '<span class="hint">Sin tropas.</span>'}</div>
+        <div class="chips">${st.generals.map((g) => this.genChip(g, this.genSel === g.id, true)).join('')}${st.garrison.length ? st.garrison.map((q) => this.chip(q, color, !this.excluded.has(q.id), true)).join('') : '<span class="hint">Sin tropas.</span>'}</div>
+        ${st.generals.length ? `<p class="hint">${this.genSel !== null ? 'El general irá con el ejército: más ataque, defensa y aguante.' : 'Toca un general para que acompañe al ejército.'}</p>` : ''}
         ${units.length ? `<div class="sec">RECLUTAR<span class="grow"></span></div>
         <div class="recruit">${units
           .map(
@@ -590,6 +634,17 @@ export class App {
           .join('')}</div>
         ${st.queue.length ? `<div class="queue">${st.queue.map((q, i) => `<button class="qitem" data-act="cq" data-i="${i}"><img src="${unitIcon(q.unit, color)}" alt="">${esc(UNITS[q.unit].name)}<span class="x">×</span><span class="bar" data-q="${i}" style="width:${i === 0 ? (q.progress / UNITS[q.unit].time) * 100 : 0}%"></span></button>`).join('')}</div>` : ''}`
         : `<p class="hint">Los fortines no reclutan, pero sus murallas y torres resisten mucho.</p>`}
+        ${ups.length || st.build || canGen ? `<div class="sec">MEJORAS<span class="grow"></span></div>` : ''}
+        ${st.build ? `<div class="building"><span>Construyendo <b>${esc(buildName(st.build.what, st))}</b></span><span class="bar"><span data-build style="width:${(st.build.progress / st.build.time) * 100}%"></span></span></div>` : ''}
+        ${!st.build && ups.length ? `<div class="ups">${ups
+          .map(
+            (o, i) => `<button class="ubtn" data-act="up" data-what="${o.what}" ${canUp[i].ok ? '' : 'disabled'}>
+              <span class="nm">${esc(o.name)}</span><span class="ds">${esc(o.desc)}</span>
+              <span class="cost"><span class="coin"></span>${o.cost} · ${o.time}s${canUp[i].ok ? '' : ` · <span class="why">${esc((canUp[i] as any).reason)}</span>`}</span>
+            </button>`,
+          )
+          .join('')}</div>` : ''}
+        ${canGen ? `<button class="secondary" data-act="gen" ${canGen.ok ? '' : 'disabled'}>☆ Nombrar general · ${GENERAL_COST} oro${canGen.ok ? '' : ` (${esc((canGen as any).reason)})`}</button>` : ''}
         ${f.starving || this.disbandArmed ? `<button class="secondary" data-act="disband" ${selMen && st.battleId === null ? '' : 'disabled'}>${this.disbandArmed ? `¿Seguro? Licenciar ${selMen} hombres` : `Licenciar ${selMen} hombres (ahorra comida)`}</button>` : ''}
         <p class="hint">${st.battleId !== null ? 'No puede salir nadie mientras dura el asedio.' : 'También puedes arrastrar desde la plaza hasta el destino.'}</p>
         <div class="sticky-send"><button class="primary" data-act="send" ${selMen && st.battleId === null ? '' : 'disabled'}>⚔ Enviar ${selMen} hombres</button></div>`;
@@ -597,23 +652,24 @@ export class App {
       el.classList.add('slim');
       const a = s.armies.find((x) => x.id === sel.id)!;
       const dest = s.settlements[a.path.length ? a.path[a.path.length - 1] : a.toNode];
-      sig = ['a', a.id, a.squads.map((q) => `${q.id}:${menOf(q)}`).join(','), a.battleId, dest.id].join('|');
+      sig = ['a', a.id, a.squads.map((q) => `${q.id}:${menOf(q)}`).join(','), a.battleId, dest.id, a.general?.level, a.retreating].join('|');
       html = `
-        <div class="sh-head"><h2>Ejército · ${totalMen(a.squads)}<span class="kind">${a.battleId !== null ? 'COMBATIENDO' : `HACIA ${esc(dest.name.toUpperCase())}`}</span></h2><button class="close" data-act="close">×</button></div>
-        <div class="chips">${a.squads.map((q) => this.chip(q, color, true, false)).join('')}</div>
-        <p class="hint">${a.battleId !== null ? 'Está combatiendo: no puede cambiar de rumbo hasta que acabe.' : 'Toca un asentamiento para cambiar su rumbo.'}</p>`;
+        <div class="sh-head"><h2>Ejército · ${totalMen(a.squads)}<span class="kind">${a.battleId !== null ? 'COMBATIENDO' : `${a.retreating ? 'SE RETIRA A' : 'HACIA'} ${esc(dest.name.toUpperCase())}`}</span></h2><button class="close" data-act="close">×</button></div>
+        <div class="chips">${a.general ? this.genChip(a.general, true, false) : ''}${a.squads.map((q) => this.chip(q, color, true, false)).join('')}</div>
+        ${a.battleId !== null ? `<button class="secondary" data-act="retreat">↩ Retirada (perderá algunos hombres)</button>` : ''}
+        <p class="hint">${a.battleId !== null ? 'Está combatiendo: retírate o espera a que acabe para cambiar de rumbo.' : 'Toca un asentamiento para cambiar su rumbo.'}</p>`;
     } else if (this.mode === 'info' && sel?.kind === 'settlement') {
       el.classList.remove('slim');
       const st = s.settlements[sel.id];
-      const k = KINDS[st.kind];
+      const k = statsOf(st);
       const oc = s.factions[st.owner].color;
       const from = this.bestAttacker(s, st);
       sig = ['i', st.id, st.owner, st.garrison.map((q) => `${q.id}:${menOf(q)}`).join(','), Math.round((st.walls / k.wallHp) * 20), from?.id, from ? totalMen(from.garrison) : 0].join('|');
       html = `
-        <div class="sh-head"><h2>${esc(st.name)}<span class="kind">${k.name} · ${st.owner === 0 ? 'Independiente' : esc(s.factions[st.owner].name)}</span></h2><button class="close" data-act="close">×</button></div>
+        <div class="sh-head"><h2>${esc(st.name)}<span class="kind">${k.name}${levelTag(st)} · ${st.owner === 0 ? 'Independiente' : esc(s.factions[st.owner].name)}</span></h2><button class="close" data-act="close">×</button></div>
         <div class="stats"><span>Muralla <b>${Math.round((st.walls / k.wallHp) * 100)} %</b></span>${k.towers ? `<span>Torres <b>${k.towers}</b></span>` : ''}<span>Defensa <b>×${k.wall}</b></span></div>
         <div class="sec">GUARNICIÓN · ${totalMen(st.garrison)}<span class="grow"></span></div>
-        <div class="chips">${st.garrison.length ? st.garrison.map((q) => this.chip(q, oc, true, false)).join('') : '<span class="hint">Sin defensores.</span>'}</div>
+        <div class="chips">${st.generals.map((g) => this.genChip(g, true, false)).join('')}${st.garrison.length ? st.garrison.map((q) => this.chip(q, oc, true, false)).join('') : '<span class="hint">Sin defensores.</span>'}</div>
         ${from ? `<button class="primary" data-act="atk" data-from="${from.id}">⚔ Atacar con ${totalMen(from.garrison)} de ${esc(from.name)}</button>` : ''}
         <p class="hint">Consejo: ataca con bastantes más hombres que los defensores; las murallas multiplican su defensa.</p>`;
     }
@@ -630,8 +686,14 @@ export class App {
         const st = s.settlements[sel.id];
         const bar = el.querySelector('[data-q="0"]') as HTMLElement | null;
         if (bar && st.queue[0]) bar.style.width = `${(st.queue[0].progress / UNITS[st.queue[0].unit].time) * 100}%`;
+        const bb = el.querySelector('[data-build]') as HTMLElement | null;
+        if (bb && st.build) bb.style.width = `${(st.build.progress / st.build.time) * 100}%`;
       }
     }
+  }
+
+  genChip(g: General, sel: boolean, toggle: boolean): string {
+    return `<button class="chip gen ${toggle ? (sel ? 'sel' : '') : 'static'}" ${toggle ? `data-act="genchip" data-id="${g.id}"` : ''}><span class="laurel">☆</span><span><span class="n">${esc(g.name)}</span><span class="nm">General · nivel ${g.level}</span></span></button>`;
   }
 
   chip(q: Squad, color: string, sel: boolean, toggle: boolean): string {
@@ -673,6 +735,34 @@ export class App {
     } else if (act === 'cancel') {
       sfx.tap();
       this.cancelTarget();
+    } else if (act === 'genchip') {
+      const id = Number(t.dataset.id);
+      this.genSel = this.genSel === id ? null : id;
+      sfx.tap();
+      this.renderSheet();
+    } else if (act === 'up' && sel?.kind === 'settlement') {
+      const r = startUpgrade(s, p, sel.id, t.dataset.what as Build['what']);
+      if (r.ok) sfx.recruit();
+      else {
+        sfx.deny();
+        this.toast(r.reason, 'bad');
+      }
+      this.renderSheet();
+    } else if (act === 'gen' && sel?.kind === 'settlement') {
+      const r = appointGeneral(s, p, sel.id);
+      if (r.ok) {
+        sfx.capture();
+        const st = s.settlements[sel.id];
+        this.toast(`${esc(st.generals[st.generals.length - 1].name)} toma el mando`, 'good');
+      } else {
+        sfx.deny();
+        this.toast(r.reason, 'bad');
+      }
+      this.renderSheet();
+    } else if (act === 'retreat' && sel?.kind === 'army') {
+      const r = orderRetreat(s, p, sel.id);
+      if (!r.ok) this.toast(r.reason ?? '', 'bad');
+      this.renderSheet();
     } else if (act === 'chip') {
       const id = Number(t.dataset.id);
       if (this.excluded.has(id)) this.excluded.delete(id);
@@ -924,6 +1014,9 @@ export class App {
           <li>Para tomar una plaza amurallada tu infantería debe <b>abrir brecha</b> mientras las torres y los tiradores disparan.</li>
           <li>Cada soldado <b>come</b>. Las aldeas y fortalezas producen comida; si se acaba, tus tropas desertan y no puedes reclutar. Puedes <b>licenciar</b> tropas.</li>
           <li>Piedra, papel y tijera: la <b>caballería</b> arrasa a los tiradores, las <b>lanzas</b> frenan a la caballería y los <b>tiradores</b> desgastan a la infantería pesada. La caballería apenas sirve para derribar murallas.</li>
+          <li><b>Mejoras</b>: sube tu fortaleza hasta el nivel 3 (más oro, comida, murallas, generales y la tropa especial de tu pueblo); en cada aldea elige granja, mercado o muro; refuerza los fortines.</li>
+          <li><b>Generales</b>: toca un general en la guarnición para que acompañe al ejército. Da más ataque y defensa, aguanta más antes de huir y sube de nivel. Si el ejército cae, muere.</li>
+          <li><b>Moral</b>: un ejército muy castigado frente a otro mucho más fuerte huye a la plaza propia más cercana. También puedes ordenar la <b>retirada</b> tocando su estandarte.</li>
           <li><b>Ganas</b> cuando no queda ninguna fortaleza enemiga en pie y <b>pierdes</b> si caen las tuyas.</li>
           <li>Pausa cuando quieras: en pausa también puedes dar órdenes. ×2 acelera el tiempo.</li>
         </ul>

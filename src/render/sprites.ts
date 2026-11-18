@@ -57,6 +57,10 @@ interface FigSpec {
   big?: boolean;
   /** Montado: color del caballo. */
   horse?: string;
+  /** Capa (generales). */
+  cape?: string;
+  /** Elefante con torre. */
+  elephant?: boolean;
 }
 
 const SKIN = '#d9a77c';
@@ -87,6 +91,18 @@ function specFor(unit: string, color: string): FigSpec {
       return { tunic: '#efe8d8', legs: SKIN, body: 'tunic', helmet: 'gallic', shield: 'oval', shieldColor: color, weapon: 'spear', big: true };
     case 'cartago_numidas':
       return { tunic: '#e6dcc4', legs: SKIN, body: 'tunic', helmet: 'none', shield: 'round', shieldColor: color, weapon: 'javelin', horse: '#a8743e' };
+    case 'roma_pretorianos':
+      return { tunic: '#5a1f6b', legs: SKIN, body: 'segmentata', helmet: 'crest', shield: 'scutum', shieldColor: '#5a1f6b', weapon: 'sword', big: true };
+    case 'galos_druidas':
+      return { tunic: '#f2efe6', legs: '#f2efe6', body: 'tunic', helmet: 'hood', shield: 'none', shieldColor: color, weapon: 'javelin' };
+    case 'cartago_elefantes':
+      return { tunic: '#e6dcc4', legs: SKIN, body: 'tunic', helmet: 'roman', shield: 'round', shieldColor: color, weapon: 'javelin', elephant: true };
+    case 'general_roma':
+      return { tunic: '#e8d9b0', legs: SKIN, body: 'segmentata', helmet: 'crest', shield: 'none', shieldColor: color, weapon: 'sword', horse: '#f0ebe0', cape: color };
+    case 'general_galos':
+      return { tunic: color, legs: '#5d6b8a', body: 'mail', helmet: 'gallic', shield: 'oval', shieldColor: '#d9b24a', weapon: 'sword', horse: '#3a2a1e', cape: '#d9b24a' };
+    case 'general_cartago':
+      return { tunic: '#f4eedf', legs: SKIN, body: 'tunic', helmet: 'crest', shield: 'round', shieldColor: '#d9b24a', weapon: 'spear', horse: '#7a5230', cape: color };
     case 'ind_honderos':
       return { tunic: '#9b8b6a', legs: SKIN, body: 'tunic', helmet: 'none', shield: 'none', shieldColor: color, weapon: 'sling' };
     default:
@@ -146,18 +162,95 @@ function drawHorse(c: CanvasRenderingContext2D, col: string): void {
   c.fill();
 }
 
+function drawElephant(c: CanvasRenderingContext2D): void {
+  c.fillStyle = 'rgba(0,0,0,0.3)';
+  c.beginPath();
+  c.ellipse(0, 0, 10, 2.2, 0, 0, Math.PI * 2);
+  c.fill();
+  c.strokeStyle = OUT;
+  c.lineWidth = 0.45;
+  const g = '#8d8a85';
+  const d = '#6f6c68';
+  c.fillStyle = d;
+  for (const x of [-6.5, -3.8, 3, 5.6]) {
+    c.fillRect(x, -6, 2.2, 6);
+    c.strokeRect(x, -6, 2.2, 6);
+  }
+  // cola
+  c.strokeStyle = d;
+  c.lineWidth = 0.7;
+  c.beginPath();
+  c.moveTo(-8.8, -9);
+  c.quadraticCurveTo(-10.2, -6, -9.4, -4);
+  c.stroke();
+  c.strokeStyle = OUT;
+  c.lineWidth = 0.45;
+  // cuerpo
+  c.fillStyle = g;
+  c.beginPath();
+  c.ellipse(-0.6, -9.5, 8.8, 5, 0, 0, Math.PI * 2);
+  c.fill();
+  c.stroke();
+  // cabeza, oreja y trompa
+  c.beginPath();
+  c.ellipse(8.2, -10.5, 3.6, 3.4, 0, 0, Math.PI * 2);
+  c.fill();
+  c.stroke();
+  c.fillStyle = d;
+  c.beginPath();
+  c.ellipse(6.6, -10, 2, 3, -0.3, 0, Math.PI * 2);
+  c.fill();
+  c.strokeStyle = g;
+  c.lineWidth = 1.6;
+  c.beginPath();
+  c.moveTo(10.8, -9);
+  c.quadraticCurveTo(12.6, -5, 11.4, -1.4);
+  c.stroke();
+  c.strokeStyle = '#f3ecd8';
+  c.lineWidth = 0.7;
+  c.beginPath();
+  c.moveTo(10, -8);
+  c.quadraticCurveTo(12.4, -7.4, 13, -9.4);
+  c.stroke();
+  // torre sobre el lomo
+  c.strokeStyle = OUT;
+  c.lineWidth = 0.45;
+  c.fillStyle = '#9b6b3a';
+  c.fillRect(-4.5, -16.5, 8, 4.2);
+  c.strokeRect(-4.5, -16.5, 8, 4.2);
+  c.fillStyle = '#c9a26a';
+  for (let x = -4.2; x < 3.2; x += 1.8) c.fillRect(x, -17.4, 1, 1);
+}
+
 function drawFigure(c: CanvasRenderingContext2D, f: FigSpec): void {
   c.lineWidth = 0.35;
   c.strokeStyle = OUT;
-  if (f.horse) {
+  if (f.elephant) {
+    drawElephant(c);
+    c.translate(-0.5, -14.2);
+    c.scale(0.62, 0.62);
+    c.lineWidth = 0.5;
+  } else if (f.horse) {
     drawHorse(c, f.horse);
     c.translate(-0.3, -5.6);
     c.scale(0.86, 0.86);
     c.lineWidth = 0.4;
   } else if (f.big) c.scale(1.12, 1.12);
+  // Capa del general (detrás del cuerpo).
+  if (f.cape) {
+    c.fillStyle = f.cape;
+    c.beginPath();
+    c.moveTo(-1.6, -7.4);
+    c.lineTo(1.4, -7.4);
+    c.lineTo(-0.2, -1.8);
+    c.lineTo(-3.8, -2.6);
+    c.closePath();
+    c.fill();
+    c.stroke();
+  }
   // Sombra
   c.fillStyle = 'rgba(0,0,0,0.28)';
-  if (!f.horse) {
+  if (!f.horse && !f.elephant) {
     c.beginPath();
     c.ellipse(0, 0, 3, 1.1, 0, 0, Math.PI * 2);
     c.fill();
@@ -192,7 +285,9 @@ function drawFigure(c: CanvasRenderingContext2D, f: FigSpec): void {
   }
   // Piernas
   c.fillStyle = f.legs;
-  if (f.horse) {
+  if (f.elephant) {
+    // sentado en la torre: sin piernas visibles
+  } else if (f.horse) {
     c.fillRect(-0.2, -3.6, 1, 3.4);
     c.strokeRect(-0.2, -3.6, 1, 3.4);
   } else {
@@ -382,8 +477,9 @@ export function soldierSprite(unit: string, color: string, flip: boolean): Sprit
   let s = figCache.get(key);
   if (!s) {
     const spec = specFor(unit, color);
-    const w = spec.horse ? 18 : 10;
-    s = mk(w, 18, w / 2, 16.5, FIG_SCALE, (c) => {
+    const w = spec.elephant ? 28 : spec.horse ? 18 : 10;
+    const h = spec.elephant ? 24 : 18;
+    s = mk(w, h, w / 2, h - 1.5, FIG_SCALE, (c) => {
       if (flip) c.scale(-1, 1);
       drawFigure(c, spec);
     });
@@ -398,18 +494,19 @@ export function fallenSprite(unit: string, color: string): Sprite {
   let s = figCache.get(key);
   if (!s) {
     const spec = specFor(unit, color);
-    const horse = !!spec.horse;
+    const horse = !!spec.horse || !!spec.elephant;
     s = mk(horse ? 20 : 16, horse ? 14 : 10, horse ? 10 : 8, horse ? 9 : 5, FIG_SCALE, (c) => {
       if (horse) {
         // caballo tumbado de lado y jinete al lado
         c.save();
         c.scale(1, 0.55);
         c.rotate(Math.PI * 0.03);
-        drawHorse(c, spec.horse!);
+        if (spec.elephant) drawElephant(c);
+        else drawHorse(c, spec.horse!);
         c.restore();
         c.rotate(-Math.PI / 2);
         c.translate(1, 7);
-        drawFigure(c, { ...spec, horse: undefined });
+        drawFigure(c, { ...spec, horse: undefined, elephant: false });
         return;
       }
       c.rotate(-Math.PI / 2);

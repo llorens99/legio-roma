@@ -1,8 +1,8 @@
-import { foodBalance, recruit, redirectArmy, sendArmy } from './game';
+import { appointGeneral, canAppointGeneral, foodBalance, GENERAL_COST, recruit, redirectArmy, sendArmy, startUpgrade } from './game';
 import { distancesFrom, neighbors } from './path';
 import { nextRandom } from './rng';
 import type { Faction, GameState, Settlement, Squad, UnitRole } from './types';
-import { KINDS, power, unitFor, UNITS } from './units';
+import { KINDS, power, specialOf, statsOf, unitFor, UNITS, upgradeOptions } from './units';
 
 export interface AiParams {
   /** Segundos entre decisiones. */
@@ -34,16 +34,24 @@ export interface AiParams {
   combine: boolean;
   /** Hace volver a los ejércitos en marcha si la fortaleza está amenazada. */
   recall: boolean;
+  /** Mejora plazas y nombra generales con el oro que le sobra. */
+  upgrades: boolean;
+  /** No mejora antes de este momento (s). */
+  upgradeAfter: number;
+  /** Fracción del coste de la próxima mejora que ahorra antes de reclutar. */
+  save: number;
 }
 
-const NORMAL: AiParams = { interval: 2, margin: 1.5, reserve: 0.5, mix: [0.4, 0.27, 0.2, 0.13], heavyAfter: 120, minSend: 2, consolidate: true, relieve: true, reach: 650, guard: 0.9, guardRadius: 500, foodAware: true, counter: false, combine: true, recall: true };
+const NORMAL: AiParams = { interval: 2, margin: 1.5, reserve: 0.5, mix: [0.4, 0.27, 0.2, 0.13], heavyAfter: 120, minSend: 2, consolidate: true, relieve: true, reach: 650, guard: 0.9, guardRadius: 500, foodAware: true, counter: false, combine: true, recall: true, upgrades: true, upgradeAfter: 120, save: 0.5 };
 
 export const AI_PARAMS: Record<string, AiParams> = {
-  // Fácil: decide despacio, no trae refuerzos, deja la fortaleza floja, no usa élite ni caballería y no vigila la comida.
-  facil: { interval: 5, margin: 1.3, reserve: 0.25, mix: [0.65, 0.3, 0.05, 0], heavyAfter: 600, minSend: 3, consolidate: false, relieve: false, reach: 450, guard: 0.3, guardRadius: 350, foodAware: false, counter: false, combine: false, recall: false },
+  // Fácil: decide despacio, no trae refuerzos, deja la fortaleza floja, no usa élite ni caballería,
+  // no vigila la comida y no mejora sus plazas.
+  facil: { interval: 5, margin: 1.3, reserve: 0.25, mix: [0.65, 0.3, 0.05, 0], heavyAfter: 600, minSend: 3, consolidate: false, relieve: false, reach: 450, guard: 0.3, guardRadius: 350, foodAware: false, counter: false, combine: false, recall: false, upgrades: false, upgradeAfter: 600, save: 0 },
   normal: NORMAL,
-  // Difícil: no se estira (ataca solo cerca de su frente) y no lanza ataques con escuadras sueltas.
-  dificil: { ...NORMAL, reach: 550, minSend: 3 },
+  // Difícil: no se estira (ataca solo cerca de su frente), no lanza ataques con escuadras sueltas
+  // y antepone el ejército a las mejoras (solo mejora con el oro que le sobra).
+  dificil: { ...NORMAL, reach: 550, minSend: 3, save: 0 },
   // Sustituto del jugador humano para las simulaciones de equilibrio (juega como la IA normal).
   jugador: { ...NORMAL },
 };
@@ -62,13 +70,13 @@ export function runAi(state: GameState, dt: number): void {
 }
 
 function wallMul(s: Settlement): number {
-  const k = KINDS[s.kind];
+  const k = statsOf(s);
   return s.walls > 0 ? k.wall : k.breached;
 }
 
 function defenseOf(s: Settlement): number {
   if (s.garrison.length === 0) return 0;
-  const k = KINDS[s.kind];
+  const k = statsOf(s);
   return power(s.garrison) * wallMul(s) + (s.walls > 0 ? k.towers * 0.6 + s.walls / 60 : 0);
 }
 
@@ -130,6 +138,18 @@ export function think(state: GameState, f: Faction, P: AiParams): void {
     mix = mix.map((x) => x / sum);
   }
   let { prod, upkeep } = foodBalance(state, f.id);
+  // Ahorro para la próxima mejora si no hay peligro cerca.
+  let savings = 0;
+  if (P.upgrades && state.time > P.upgradeAfter && !own.some((x) => x.build) && !own.some((x) => x.battleId !== null)) {
+    const fort = own.find((x) => x.kind === 'fortaleza');
+    const safe = !fort || defenseOf(fort) > regionalThreat(state, fort, P.guardRadius) * 0.8;
+    const next = fort ? upgradeOptions(fort)[0] : undefined;
+    if (safe && next) savings = next.cost * P.save;
+    else if (safe) {
+      const ald = own.find((x) => x.kind === 'aldea' && !x.building);
+      if (ald) savings = 120 * P.save;
+    }
+  }
   const sorted = own.slice().sort((a, b) => KINDS[b.kind].value - KINDS[a.kind].value);
   for (const s of sorted) {
     if (s.kind === 'fortin') continue;
@@ -147,7 +167,10 @@ export function think(state: GameState, f: Faction, P: AiParams): void {
       }
       let role = ROLES[best];
       if ((role === 'pesada' || role === 'caballeria') && (s.kind !== 'fortaleza' || state.time < P.heavyAfter)) role = 'basica';
-      const u = unitFor(f.culture, role);
+      let u = unitFor(f.culture, role);
+      const sp = specialOf(f.culture);
+      if (sp && s.kind === "fortaleza" && s.level >= 3 && f.gold >= sp.cost && nextRandom(state) < 0.35) u = sp;
+      if (f.gold - u.cost < savings) break;
       const extra = u.upkeep * u.men;
       if (P.foodAware && prod - upkeep - extra < -0.1 && f.food < 120 + extra * 200) break;
       if (!recruit(state, f.id, s.id, u.key).ok) break;
@@ -199,6 +222,31 @@ export function think(state: GameState, f: Faction, P: AiParams): void {
     }
   }
 
+  // 2b. Mejoras y generales con el oro que sobra.
+  if (P.upgrades) {
+    const reserve = 20;
+    const fb = foodBalance(state, f.id);
+    const options: { s: Settlement; what: string; cost: number; score: number }[] = [];
+    for (const s of own) {
+      if (s.build || s.battleId !== null) continue;
+      for (const o of upgradeOptions(s)) {
+        let score = 1;
+        if (s.kind === 'fortaleza') score = 3 + (s.level === 1 ? 1 : 0);
+        else if (s.kind === 'aldea') {
+          if (o.what === 'granja') score = fb.prod - fb.upkeep < 1 ? 2.5 : 0.8;
+          if (o.what === 'mercado') score = fb.prod - fb.upkeep >= 1 ? 2 : 0.8;
+          if (o.what === 'empalizada') score = isFrontier(state, s) ? 1.6 : 0.3;
+        } else if (s.kind === 'fortin') score = isFrontier(state, s) ? 1.5 : 0.4;
+        options.push({ s, what: o.what, cost: o.cost, score: score * (0.8 + 0.4 * nextRandom(state)) });
+      }
+    }
+    options.sort((a, b) => b.score - a.score);
+    const o = options[0];
+    if (o && f.gold >= o.cost + reserve && state.time > P.upgradeAfter) startUpgrade(state, f.id, o.s.id, o.what as never);
+    const fort = own.find((s) => s.kind === 'fortaleza');
+    if (fort && f.gold >= GENERAL_COST + reserve && canAppointGeneral(state, f.id, fort.id).ok) appointGeneral(state, f.id, fort.id);
+  }
+
   // 3. Atacar.
   const pool: { s: Settlement; avail: Squad[]; dist: number[] }[] = [];
   for (const s of own) {
@@ -225,7 +273,7 @@ export function think(state: GameState, f: Faction, P: AiParams): void {
         best = t;
       }
     }
-    if (best) sendArmy(state, f.id, s.id, best.id, avail.map((q) => q.id));
+    if (best) sendArmy(state, f.id, s.id, best.id, avail.map((q) => q.id), generalFor(s, avail));
     else if (P.combine) pool.push({ s, avail, dist });
   }
 
@@ -252,7 +300,7 @@ export function think(state: GameState, f: Faction, P: AiParams): void {
         bestFrom = from;
       }
     }
-    if (best) for (const p of bestFrom) sendArmy(state, f.id, p.s.id, best.id, p.avail.map((q) => q.id));
+    if (best) for (const p of bestFrom) sendArmy(state, f.id, p.s.id, best.id, p.avail.map((q) => q.id), generalFor(p.s, p.avail));
   }
 
   // 4. Llevar tropas de la retaguardia al frente.
@@ -304,4 +352,10 @@ function pickSquads(garrison: Squad[], keep: number): Squad[] {
     kp += power([q]);
   }
   return garrison.filter((q) => !kept.includes(q));
+}
+
+/** El general de la plaza acompaña al ataque si este es grande (al menos 4 escuadras). */
+function generalFor(s: Settlement, avail: Squad[]): number | undefined {
+  if (!s.generals.length || avail.length < 4) return undefined;
+  return s.generals[0].id;
 }

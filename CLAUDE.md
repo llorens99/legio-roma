@@ -15,12 +15,13 @@ Todo en español: textos del juego, comentarios, commits, PR y documentación.
    - Duración mediana en el Po entre 8 y 25 min; en Trinacria e Hispania ≤ 40 min.
    - Partidas sin final < 10 %. La IA normal pasa hambre < 10 % del tiempo.
    - Sustituto del jugador (`jugador`, en espejo Roma contra Roma): gana a Fácil ≥ 75 %, a Normal entre 35 % y 65 %, y a Difícil ≤ 42 % (y menos que a Normal).
+   - Para probar variantes de la IA, compara en espejo con muchas partidas (≥ 80): con 30–40 el ruido es de ±8 puntos.
 4. `npm run build` y `python3 tools/e2e.py`: móvil vertical y horizontal con toques reales, errores de consola y capturas en `tools/out/`. **Mira las capturas.**
 5. Con 2 núcleos, no lances simulaciones mientras corre el e2e. Procesos largos en segundo plano escribiendo a un log.
 - Edita archivos grandes con scripts que escriban primero en /tmp y comprueben cada sustitución.
 
 ## Arquitectura
-- TypeScript + Vite + `vite-plugin-singlefile`: el juego entero es un solo `dist/index.html` (≈380 KB, funciona sin conexión).
+- TypeScript + Vite + `vite-plugin-singlefile`: el juego entero es un solo `dist/index.html` (≈405 KB, funciona sin conexión).
 - `src/core/`: reglas puras y deterministas, sin DOM. El generador aleatorio con semilla vive en `GameState.rng`. Tick fijo de 0,1 s (`TICK`).
   - `types.ts` tipos serializables · `units.ts` tropas y tipos de asentamiento (`KINDS`) · `maps.ts` mapas y caminos · `path.ts` rutas
   - `game.ts` partida nueva y órdenes (reclutar, enviar, redirigir) · `sim.ts` `step()` · `combat.ts` batallas y asedios · `ai.ts` IA (`AI_PARAMS`: facil, normal, dificil, jugador) · `save.ts` versión y `migrate()` · `validate.ts` validación de mapas
@@ -40,7 +41,12 @@ Todo en español: textos del juego, comentarios, commits, PR y documentación.
 - Colores y nombres por bando (`LOOKS`): un pueblo repetido usa otro nombre y color.
 - IA difícil: no se estira (alcance 550) y no ataca con escuadras sueltas. Normal y difícil reúnen ataques de varias plazas y hacen volver ejércitos si su fortaleza peligra. Sin trampas.
 - Pierdes si no te queda ninguna fortaleza; gana el último bando en pie.
-- Guardado v2 (v1 → v2 añade comida).
+- Mejoras (`upgradeOptions`, `statsOf(s)` calcula las características según tipo, nivel y edificio; usa siempre `statsOf` y no `KINDS[s.kind]` para un asentamiento concreto): fortaleza niveles 1–3 (200 y 350 de oro; +0,8 oro, +0,3 comida, +80 población, muralla +250, +2 torres por nivel), aldea con un edificio (granja, mercado o muro de piedra, 120–130), fortín reforzado (120). Las obras se paran durante un asedio; al conquistar se conservan.
+- Generales (`General`): uno al empezar en la fortaleza; uno más por cada nivel extra de fortalezas; cuestan 200. Van con un ejército (`sendArmy(..., generalId)`) o esperan en una plaza; ×(1,08 + 0,04·(nivel−1)) de ataque y defensa, aguantan más antes de huir, suben de nivel con los enemigos abatidos y mueren si cae su ejército o su plaza.
+- Moral (`stepBattle`): un bando de ejércitos con menos del 38 % de su vida máxima en la batalla y 1,5 veces más débil que el rival huye (`retreatArmy`) a la plaza propia más cercana perdiendo un 12 %; los que huyen no se paran a luchar. Retirada ordenada (`orderRetreat`) pierde menos. Las guarniciones no huyen.
+- Tropas especiales (fortaleza nivel 3): Pretorianos (Roma), Druidas (+10 % de ataque a su bando), Elefantes de guerra (Cartago, derriban murallas).
+- IA: fácil no mejora; normal ahorra la mitad de la próxima mejora antes de reclutar; difícil solo mejora con lo que le sobra.
+- Guardado v3 (v1 → v2 añade comida; v2 → v3 mejoras, generales y moral).
 
 ## Entrega
 - Cada hito en su rama (`m0`, `m1`…) con su PR sobre el anterior; se aceptan en orden.

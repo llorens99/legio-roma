@@ -76,6 +76,17 @@ with sync_playwright() as p:
     top = page.eval_on_selector('#sheet', 'e => e.getBoundingClientRect().top')
     check(sy < top, f'la fortaleza seleccionada queda visible sobre el panel ({sy:.0f} < {top:.0f})')
 
+    # M2: mejorar la fortaleza y elegir al general para el ejército.
+    page.evaluate("window.__legio.state.factions[1].gold = 600")
+    page.wait_for_timeout(400)
+    page.locator('[data-act=up][data-what=nivel]').scroll_into_view_if_needed()
+    tap_sel(page, '[data-act=up][data-what=nivel]')
+    check(page.evaluate("!!window.__legio.state.settlements[0].build"), 'obra de nivel 2 en marcha')
+    shot(page, '04b-mejora')
+    page.locator('[data-act=genchip]').first.scroll_into_view_if_needed()
+    tap_sel(page, '[data-act=genchip]')
+    check(page.evaluate("window.__legio.genSel !== null"), 'general elegido para el ejército')
+
     # Enviar tropas a Castra Rubra (fortín independiente).
     tap_sel(page, '[data-act=send]')
     check(page.get_by_text('Toca el destino').count() > 0, 'modo elegir destino')
@@ -83,6 +94,7 @@ with sync_playwright() as p:
     tap_settlement(page, 'Castra Rubra')
     n_armies = page.evaluate("window.__legio.state.armies.filter(a => a.owner === 1).length")
     check(n_armies == 1, 'ejército en marcha')
+    check(page.evaluate("!!window.__legio.state.armies.find(a => a.owner === 1).general"), 'el general marcha con el ejército')
     page.wait_for_timeout(1200)
     shot(page, '06-marcha')
 
@@ -92,6 +104,16 @@ with sync_playwright() as p:
     page.wait_for_timeout(900)
     shot(page, '07-asedio')
     check(page.evaluate("window.__legio.state.battles.length") >= 1, 'hay batalla en curso')
+    # Tocar el estandarte del ejército y ordenar la retirada.
+    page.evaluate("window.__legio.closeSheet()")
+    page.wait_for_timeout(200)
+    fx, fy = page.evaluate("(() => { const a = window.__legio; const ar = a.state.armies.find(x => x.owner === 1); const p = a.renderer.armyFront.get(ar.id); const [x, y] = a.cam.toScreen(p.x, p.y); return [x, y - 20 * Math.min(1.2, a.cam.z) - 10]; })()")
+    page.touchscreen.tap(fx, fy)
+    page.wait_for_timeout(500)
+    shot(page, '07b-ejercito')
+    check(page.locator('[data-act=retreat]').count() == 1, 'botón de retirada en el panel del ejército')
+    tap_sel(page, '[data-act=retreat]')
+    check(page.evaluate("window.__legio.state.armies.some(a => a.owner === 1 && a.retreating)"), 'el ejército se retira')
 
     # Pausa y velocidad
     page.touchscreen.tap(*page.evaluate("(() => { const r = document.getElementById('pause').getBoundingClientRect(); return [r.x + r.width/2, r.y + r.height/2]; })()"))

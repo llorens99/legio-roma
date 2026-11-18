@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { newGame, recruit, sendArmy, redirectArmy, cancelRecruit, newSquad, disband, foodBalance, TICK } from '../src/core/game';
+import { newGame, recruit, sendArmy, redirectArmy, cancelRecruit, newSquad, disband, foodBalance, startUpgrade, appointGeneral, generalsOf, TICK } from '../src/core/game';
+import { orderRetreat } from '../src/core/combat';
+import { statsOf, recruitable } from '../src/core/units';
 import { step } from '../src/core/sim';
 import { MAPS } from '../src/core/maps';
 import { validateMap } from '../src/core/validate';
@@ -187,6 +189,92 @@ describe('comida y caballería', () => {
   });
 });
 
+describe('mejoras, generales y moral', () => {
+  it('subir la fortaleza de nivel cuesta oro, tarda y mejora renta, murallas y tropas', () => {
+    const s = peaceful();
+    const fort = s.settlements.find((x) => x.owner === 1 && x.kind === 'fortaleza')!;
+    s.factions[1].gold = 1000;
+    const inc1 = statsOf(fort).income;
+    expect(recruitable('roma', 'fortaleza', fort.level).some((u) => u.special)).toBe(false);
+    expect(startUpgrade(s, 1, fort.id, 'nivel').ok).toBe(true);
+    expect(startUpgrade(s, 1, fort.id, 'nivel').ok).toBe(false); // ya hay obra
+    run(s, 46);
+    expect(fort.level).toBe(2);
+    expect(statsOf(fort).income).toBeGreaterThan(inc1);
+    expect(fort.walls).toBe(statsOf(fort).wallHp);
+    startUpgrade(s, 1, fort.id, 'nivel');
+    run(s, 61);
+    expect(fort.level).toBe(3);
+    expect(recruitable('roma', 'fortaleza', fort.level).some((u) => u.key === 'roma_pretorianos')).toBe(true);
+    expect(recruit(s, 1, fort.id, 'roma_pretorianos').ok).toBe(true);
+  });
+  it('una aldea solo admite un edificio', () => {
+    const s = peaceful();
+    const ald = s.settlements.find((x) => x.owner === 1 && x.kind === 'aldea')!;
+    s.factions[1].gold = 1000;
+    const food0 = statsOf(ald).food;
+    expect(startUpgrade(s, 1, ald.id, 'granja').ok).toBe(true);
+    run(s, 41);
+    expect(ald.building).toBe('granja');
+    expect(statsOf(ald).food).toBeGreaterThan(food0);
+    expect(startUpgrade(s, 1, ald.id, 'mercado').ok).toBe(false);
+  });
+  it('cada pueblo empieza con un general y puede nombrar más al mejorar la fortaleza', () => {
+    const s = peaceful();
+    const fort = s.settlements.find((x) => x.owner === 1 && x.kind === 'fortaleza')!;
+    expect(fort.generals.length).toBe(1);
+    s.factions[1].gold = 1000;
+    expect(appointGeneral(s, 1, fort.id).ok).toBe(false);
+    fort.level = 2;
+    expect(appointGeneral(s, 1, fort.id).ok).toBe(true);
+    expect(generalsOf(s, 1).length).toBe(2);
+  });
+  it('el general viaja con el ejército, gana experiencia y muere si cae su ejército', () => {
+    const s = peaceful();
+    const fort = s.settlements.find((x) => x.owner === 1 && x.kind === 'fortaleza')!;
+    const g = fort.generals[0];
+    for (let i = 0; i < 6; i++) fort.garrison.push(newSquad(s, 'roma_legionarios'));
+    const target = s.settlements.find((x) => x.name === 'Castra Rubra')!;
+    const r = sendArmy(s, 1, fort.id, target.id, undefined, g.id);
+    expect(r.army!.general?.id).toBe(g.id);
+    expect(fort.generals.length).toBe(0);
+    run(s, 120);
+    expect(target.owner).toBe(1);
+    expect(target.generals[0]?.id).toBe(g.id);
+    expect(g.xp).toBeGreaterThan(0);
+  });
+  it('un ejército muy castigado huye a casa en vez de morir', () => {
+    const s = peaceful();
+    const a = s.settlements.find((x) => x.name === 'Castra Rubra')!;
+    const b = s.settlements.find((x) => x.name === 'Turris Vada')!;
+    a.owner = 1; a.garrison = [0, 1, 2].map(() => newSquad(s, 'roma_hastati'));
+    b.owner = 2; b.garrison = [0, 1, 2, 3, 4, 5, 6, 7].map(() => newSquad(s, 'galos_nobles'));
+    sendArmy(s, 1, a.id, b.id);
+    sendArmy(s, 2, b.id, a.id);
+    let routed = false;
+    for (let i = 0; i < 900 && !routed; i++) {
+      step(s);
+      routed = s.events.some((e) => e.type === 'rout' && e.faction === 1);
+    }
+    expect(routed).toBe(true);
+    const mine = s.armies.find((x) => x.owner === 1);
+    expect(mine?.retreating).toBe(true);
+  });
+  it('se puede ordenar la retirada de un ejército en combate', () => {
+    const s = peaceful();
+    const fort = s.settlements.find((x) => x.owner === 1 && x.kind === 'fortaleza')!;
+    const target = s.settlements.find((x) => x.name === 'Castra Rubra')!;
+    const r = sendArmy(s, 1, fort.id, target.id);
+    run(s, 40);
+    expect(r.army!.battleId).not.toBeNull();
+    expect(orderRetreat(s, 1, r.army!.id).ok).toBe(true);
+    expect(r.army!.battleId).toBeNull();
+    run(s, 60);
+    expect(s.armies.length).toBe(0);
+    expect(fort.garrison.length).toBeGreaterThan(0);
+  });
+});
+
 describe('varios rivales', () => {
   it('una partida de 4 bandos IA termina con un ganador', () => {
     const s = newGame({ seed: 21, mapId: 'hispania', players: [
@@ -235,8 +323,10 @@ describe('guardado', () => {
     const raw = JSON.parse(serialize(s));
     raw.version = 1;
     for (const f of raw.factions) { delete f.food; delete f.starving; }
+    for (const st of raw.settlements) { delete st.level; delete st.building; delete st.build; delete st.generals; }
     const m = migrate(raw)!;
-    expect(m.version).toBe(2);
+    expect(m.version).toBe(3);
+    expect(m.settlements[0].level).toBe(1);
     expect(m.factions[1].food).toBeGreaterThan(0);
     expect(m.factions[1].starving).toBe(false);
   });

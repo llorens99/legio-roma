@@ -1,9 +1,9 @@
 import { runAi } from './ai';
-import { armyS, joinBattle, MEET_DIST, removeArmy, startFieldBattle, startSiege, stepBattle } from './combat';
+import { armyS, destroyArmy, joinBattle, mergeIntoGarrison, MEET_DIST, removeArmy, startFieldBattle, startSiege, stepBattle } from './combat';
 import { armySpeed, FOOD_CAP, foodBalance, newSquad, TICK } from './game';
 import { roadBetween } from './path';
 import type { Army, GameState } from './types';
-import { KINDS, maxHp, UNITS } from './units';
+import { maxHp, statsOf, UNITS } from './units';
 
 const MAX_EVENTS = 200;
 
@@ -26,12 +26,25 @@ export function step(state: GameState, dt: number = TICK): void {
 
 function economy(state: GameState, dt: number): void {
   for (const s of state.settlements) {
-    const k = KINDS[s.kind];
+    const k = statsOf(s);
     s.pop = Math.min(k.popMax, s.pop + k.popRegen * dt);
     if (s.battleId === null && s.walls < k.wallHp) s.walls = Math.min(k.wallHp, s.walls + (k.wallHp / 90) * dt);
     if (s.owner === 0) continue;
     const f = state.factions[s.owner];
     if (f.alive) f.gold += k.income * dt;
+    // Obras: avanzan si no hay asedio.
+    if (s.build && s.battleId === null) {
+      s.build.progress += dt;
+      if (s.build.progress >= s.build.time) {
+        const what = s.build.what;
+        if (what === 'nivel') s.level++;
+        else s.building = what;
+        s.build = null;
+        // La muralla nueva sale entera.
+        s.walls = statsOf(s).wallHp;
+        state.events.push({ type: 'upgraded', settlement: s.id, faction: s.owner, what });
+      }
+    }
   }
 }
 
@@ -62,7 +75,7 @@ function food(state: GameState, dt: number): void {
       a.squads.forEach(hurt);
       if (a.battleId === null) {
         a.squads = a.squads.filter((q) => q.hp > 0.01);
-        if (!a.squads.length) removeArmy(state, a.id);
+        if (!a.squads.length) destroyArmy(state, a);
       }
     }
   }
@@ -86,7 +99,7 @@ function replenish(state: GameState, dt: number): void {
   for (const s of state.settlements) {
     if (s.battleId !== null || s.garrison.length === 0) continue;
     if (s.owner !== 0 && state.factions[s.owner].starving) continue;
-    const k = KINDS[s.kind];
+    const k = statsOf(s);
     let worst = null as null | (typeof s.garrison)[number];
     let worstR = 0.999;
     for (const q of s.garrison) {
@@ -135,8 +148,7 @@ function arrive(state: GameState, a: Army, overflow: number): void {
       }
     }
     // Llega a casa (o a reforzar un asentamiento propio asediado): se une a la guarnición.
-    s.garrison.push(...a.squads);
-    removeArmy(state, a.id);
+    mergeIntoGarrison(state, a, s.id);
     return;
   }
   a.d = road.len;
@@ -151,7 +163,8 @@ function arrive(state: GameState, a: Army, overflow: number): void {
 }
 
 function encounters(state: GameState): void {
-  const free = state.armies.filter((a) => a.battleId === null && !a.waiting);
+  // Los que huyen no se paran a luchar ni se unen a batallas.
+  const free = state.armies.filter((a) => a.battleId === null && !a.waiting && !a.retreating);
   // Unirse a batallas de campo cercanas en el mismo camino.
   for (const a of free) {
     if (a.battleId !== null) continue;
@@ -187,7 +200,9 @@ function checkVictory(state: GameState): void {
       if (s.owner === f.id) {
         s.owner = 0;
         s.queue = [];
+        s.build = null;
       }
+      s.generals = s.generals.filter((g) => g.owner !== f.id);
     }
     for (const a of state.armies.filter((x) => x.owner === f.id)) removeArmy(state, a.id);
     for (const b of state.battles) for (const side of b.sides) if (side.faction === f.id && !side.garrison) side.faction = 0;
