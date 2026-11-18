@@ -1,0 +1,59 @@
+import { deserialize, serialize } from './core/save';
+import type { GameState } from './core/types';
+
+const GAME_KEY = 'legio-roma:partida';
+const SETTINGS_KEY = 'legio-roma:ajustes';
+
+export interface Settings {
+  muted: boolean;
+  tipsDone: number;
+  culture: 'roma' | 'galos';
+  difficulty: 'facil' | 'normal';
+}
+
+const DEFAULTS: Settings = { muted: false, tipsDone: 0, culture: 'roma', difficulty: 'normal' };
+
+function safeGet(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function safeSet(key: string, value: string | null): void {
+  try {
+    if (value === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, value);
+  } catch {
+    /* almacenamiento no disponible */
+  }
+}
+
+export function saveGame(state: GameState): void {
+  if (state.winner !== null) {
+    safeSet(GAME_KEY, null);
+    return;
+  }
+  safeSet(GAME_KEY, serialize(state));
+}
+
+export function loadGame(): GameState | null {
+  return deserialize(safeGet(GAME_KEY));
+}
+
+export function clearGame(): void {
+  safeSet(GAME_KEY, null);
+}
+
+export function loadSettings(): Settings {
+  try {
+    return { ...DEFAULTS, ...JSON.parse(safeGet(SETTINGS_KEY) ?? '{}') };
+  } catch {
+    return { ...DEFAULTS };
+  }
+}
+
+export function saveSettings(s: Settings): void {
+  safeSet(SETTINGS_KEY, JSON.stringify(s));
+}
