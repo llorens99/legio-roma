@@ -6,7 +6,7 @@ export interface MapNode {
   kind: SettlementKind;
   x: number;
   y: number;
-  /** Índice del jugador inicial (0 = independiente, 1 = sur, 2 = norte). */
+  /** Índice del jugador inicial (0 = independiente, 1…N = jugadores). */
   start: number;
   /** Guarnición inicial: [básicas, tiradores, pesadas]. */
   garrison: [number, number, number];
@@ -15,12 +15,18 @@ export interface MapNode {
 export interface MapDef {
   id: string;
   name: string;
+  /** Descripción corta para el menú. */
+  desc: string;
+  players: number;
   width: number;
   height: number;
   nodes: MapNode[];
   roads: [number, number][];
-  /** Si es simétrico respecto al centro: índice del nodo espejo de cada nodo. */
-  mirror?: number[];
+  /**
+   * Simetría: `pre[i]` es el nodo que la transformación T lleva a i. Los caminos se copian
+   * transformados para que todas las posiciones sean iguales.
+   */
+  sym?: { pre: number[]; T: (p: Pt) => Pt };
   /** Río decorativo (puntos de control). */
   river?: Pt[];
 }
@@ -66,15 +72,101 @@ function buildPo(): MapDef {
       }
     }
   }
-  const mirror = nodes.map((_, i) => m(i));
+  const pre = nodes.map((_, i) => m(i));
   const river: Pt[] = [
     { x: -20, y: 960 }, { x: 140, y: 900 }, { x: 290, y: 840 }, { x: 430, y: 860 },
     { x: 570, y: 740 }, { x: 710, y: 760 }, { x: 860, y: 700 }, { x: 1020, y: 640 },
   ];
-  return { id: 'po', name: 'Valle del Po', width: W, height: H, nodes, roads, mirror, river };
+  return { id: 'po', name: 'Valle del Po', desc: 'Dos pueblos frente a frente', players: 2, width: W, height: H, nodes, roads, sym: { pre, T: (p) => ({ x: W - p.x, y: H - p.y }) }, river };
 }
 
-export const MAPS: Record<string, MapDef> = { po: buildPo() };
+/**
+ * Mapa con simetría de giro para n jugadores: cada sector es igual al anterior girado.
+ * Por sector: fortaleza, dos aldeas propias, un fortín independiente delante, y en la frontera
+ * con el sector siguiente una aldea y un fortín independientes. En el centro, una aldea grande.
+ */
+function buildRotational(
+  id: string,
+  name: string,
+  desc: string,
+  n: number,
+  size: number,
+  base: number,
+  geo: { rF: number; rA: number; aA: number; rT: number; rB1: number; rB2: number },
+  names: string[][],
+  centerName: string,
+): MapDef {
+  const c = size / 2;
+  const deg = Math.PI / 180;
+  const at = (r: number, a: number) => ({ x: Math.round(c + Math.cos(a * deg) * r), y: Math.round(c + Math.sin(a * deg) * r) });
+  const nodes: MapNode[] = [];
+  const idx: { F: number; A1: number; A2: number; T: number; B1: number; B2: number }[] = [];
+  for (let k = 0; k < n; k++) {
+    const axis = base + (k * 360) / n;
+    const half = 180 / n;
+    const nm = names[k];
+    const add = (node: Omit<MapNode, 'x' | 'y'>, p: { x: number; y: number }) => (nodes.push({ ...node, ...p }), nodes.length - 1);
+    idx.push({
+      F: add({ name: nm[0], kind: 'fortaleza', start: k + 1, garrison: [3, 2, 0] }, at(geo.rF, axis)),
+      A1: add({ name: nm[1], kind: 'aldea', start: k + 1, garrison: [1, 0, 0] }, at(geo.rA, axis - geo.aA)),
+      A2: add({ name: nm[2], kind: 'aldea', start: k + 1, garrison: [1, 0, 0] }, at(geo.rA, axis + geo.aA)),
+      T: add({ name: nm[3], kind: 'fortin', start: 0, garrison: [3, 2, 0] }, at(geo.rT, axis)),
+      B1: add({ name: nm[4], kind: 'aldea', start: 0, garrison: [3, 1, 0] }, at(geo.rB1, axis + half)),
+      B2: add({ name: nm[5], kind: 'fortin', start: 0, garrison: [3, 2, 0] }, at(geo.rB2, axis + half)),
+    });
+  }
+  const C = nodes.length;
+  nodes.push({ name: centerName, kind: 'aldea', start: 0, garrison: [5, 2, 0], ...at(0, 0) });
+  const roads: [number, number][] = [];
+  for (let k = 0; k < n; k++) {
+    const a = idx[k];
+    const b = idx[(k + 1) % n];
+    roads.push([a.F, a.A1], [a.F, a.A2], [a.F, a.T], [a.A2, a.B1], [a.B1, b.A1], [a.T, a.B2], [a.B2, b.T], [a.B1, a.B2], [a.T, C]);
+  }
+  const per = 6;
+  const pre = nodes.map((_, i) => (i === C ? C : (i - per + per * n) % (per * n)));
+  const rot = (2 * Math.PI) / n;
+  const T = (p: Pt): Pt => ({
+    x: c + (p.x - c) * Math.cos(rot) - (p.y - c) * Math.sin(rot),
+    y: c + (p.x - c) * Math.sin(rot) + (p.y - c) * Math.cos(rot),
+  });
+  return { id, name, desc, players: n, width: size, height: size, nodes, roads, sym: { pre, T } };
+}
+
+const trinacria = buildRotational(
+  'trinacria',
+  'Trinacria',
+  'Sicilia: tres pueblos, un centro',
+  3,
+  1400,
+  90,
+  { rF: 560, rA: 520, aA: 24, rT: 370, rB1: 565, rB2: 300 },
+  [
+    ['Syracusae', 'Helorus', 'Acrae', 'Castra Hyblae', 'Morgantina', 'Turris Aetnae'],
+    ['Lilybaeum', 'Mazara', 'Eryx', 'Castra Halyci', 'Segesta', 'Turris Crimisi'],
+    ['Panormus', 'Soluntum', 'Himera', 'Castra Cephaloedi', 'Tyndaris', 'Turris Nebrodi'],
+  ],
+  'Henna',
+);
+
+const hispania = buildRotational(
+  'hispania',
+  'Hispania',
+  'Cuatro pueblos se disputan la península',
+  4,
+  1600,
+  135,
+  { rF: 620, rA: 590, aA: 20, rT: 420, rB1: 600, rB2: 320 },
+  [
+    ['Gades', 'Hispalis', 'Malaca', 'Castra Baetis', 'Corduba', 'Turris Anae'],
+    ['Olisipo', 'Scallabis', 'Conimbriga', 'Castra Tagi', 'Bracara', 'Turris Durii'],
+    ['Numantia', 'Clunia', 'Pompaelo', 'Castra Iberi', 'Caesaraugusta', 'Turris Sicoris'],
+    ['Tarraco', 'Saguntum', 'Dertosa', 'Castra Sucronis', 'Carthago Nova', 'Turris Segurae'],
+  ],
+  'Toletum',
+);
+
+export const MAPS: Record<string, MapDef> = { po: buildPo(), trinacria, hispania };
 
 /** Construye la geometría de los caminos (curvas suaves deterministas). */
 export function buildRoads(map: MapDef, seed: number): Road[] {
@@ -85,13 +177,17 @@ export function buildRoads(map: MapDef, seed: number): Road[] {
     const A = map.nodes[a];
     const B = map.nodes[b];
     let pts: Pt[] | null = null;
-    if (map.mirror) {
-      const ma = map.mirror[a];
-      const mb = map.mirror[b];
+    if (map.sym) {
+      const ma = map.sym.pre[a];
+      const mb = map.sym.pre[b];
       const twin = byKey.get(`${ma}-${mb}`) ?? byKey.get(`${mb}-${ma}`);
       if (twin) {
-        const mp = twin.pts.map((p) => ({ x: map.width - p.x, y: map.height - p.y }));
+        const T = map.sym.T;
+        const mp = twin.pts.map((p) => T(p));
         pts = twin.a === ma ? mp : mp.reverse();
+        // Ajustar extremos exactos a los nodos (evita deriva por redondeo).
+        pts[0] = { x: A.x, y: A.y };
+        pts[pts.length - 1] = { x: B.x, y: B.y };
       }
     }
     if (!pts) {

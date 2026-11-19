@@ -1,5 +1,6 @@
 import { initAudio, isMuted, resumeAudio, setMuted, sfx, suspendAudio } from './audio';
-import { cancelRecruit, canRecruit, incomeOf, newGame, recruit, redirectArmy, routeFor, sendArmy, TICK } from './core/game';
+import { cancelRecruit, canRecruit, CULTURE_NAMES, defaultPlayers, factionNames, disband, foodBalance, incomeOf, newGame, recruit, redirectArmy, routeFor, sendArmy, TICK } from './core/game';
+import { MAPS } from './core/maps';
 import { distancesFrom } from './core/path';
 import { step } from './core/sim';
 import type { GameEvent, GameState, Settlement, Squad } from './core/types';
@@ -22,7 +23,10 @@ type SheetMode = 'none' | 'settlement' | 'army' | 'info' | 'target';
 const TIPS = [
   (s: GameState, p: number) => `Toca tu fortaleza <b>${esc(fortOf(s, p)?.name ?? '')}</b> para ver tus tropas y reclutar.`,
   () => 'Pulsa <b>Enviar</b> y toca una aldea independiente (bandera gris) para conquistarla.',
-  (s: GameState, p: number) => `Recluta con tu oro y conquista la fortaleza enemiga <b>${esc(enemyFortOf(s, p)?.name ?? '')}</b> para ganar.`,
+  (s: GameState, p: number) =>
+    s.factions.length > 3
+      ? 'Recluta con tu oro y cuida la <b>comida</b>. Ganas cuando caigan todas las fortalezas enemigas.'
+      : `Recluta con tu oro y conquista la fortaleza enemiga <b>${esc(enemyFortOf(s, p)?.name ?? '')}</b> para ganar.`,
 ];
 
 function fortOf(s: GameState, p: number): Settlement | undefined {
@@ -68,6 +72,8 @@ export class App {
   tipT = 0;
   endShown = false;
   sheetOpenedAt = 0;
+  /** Primer toque en «Licenciar» pide confirmación. */
+  disbandArmed = false;
   /** Destino suave de la cámara. */
   camGoal: { x: number; y: number } | null = null;
   settings: Settings = loadSettings();
@@ -196,12 +202,13 @@ export class App {
 
   // ---------------- Partida ----------------
 
-  startNew(culture: 'roma' | 'galos', difficulty: 'facil' | 'normal'): void {
-    const other = culture === 'roma' ? 'galos' : 'roma';
+  startNew(culture: Settings['culture'], difficulty: Settings['difficulty'], mapId: string): void {
     const seed = (Math.random() * 2 ** 31) | 0;
-    this.state = newGame({ seed, difficulty, players: [{ culture, ai: null }, { culture: other, ai: difficulty }] });
+    const map = MAPS[mapId] ?? MAPS.po;
+    this.state = newGame({ seed, difficulty, mapId: map.id, players: defaultPlayers(map.players, culture, difficulty, seed) });
     this.settings.culture = culture;
     this.settings.difficulty = difficulty;
+    this.settings.mapId = map.id;
     saveSettings(this.settings);
     this.begin();
     this.save();
@@ -255,7 +262,7 @@ export class App {
   }
 
   onEvent(s: GameState, e: GameEvent, p: number, name: (id: number) => string): void {
-    const fname = (f: number) => (f === 0 ? 'los independientes' : s.factions[f].culture === 'roma' ? 'Roma' : 'los galos');
+    const fname = (f: number) => (f === 0 ? 'los independientes' : s.factions[f].name);
     switch (e.type) {
       case 'capture': {
         const st = s.settlements[e.settlement];
@@ -266,7 +273,7 @@ export class App {
         } else if (e.from === p) {
           sfx.lost();
           this.toast(`${esc(name(e.settlement))} ha caído ante ${fname(e.faction)}`, 'bad', st);
-        } else this.toast(`${fname(e.faction)[0].toUpperCase() + fname(e.faction).slice(1)} toman ${esc(name(e.settlement))}`, '', st);
+        } else this.toast(`${esc(fname(e.faction))} toma ${esc(name(e.settlement))}`, '', st);
         if (this.view.selected?.kind === 'settlement' && this.view.selected.id === e.settlement) this.sheetSig = '';
         break;
       }
@@ -300,6 +307,20 @@ export class App {
         else if (e.loser === p) {
           sfx.lost();
           this.toast('Tu ejército ha sido derrotado', 'bad', e);
+        }
+        break;
+      case 'starving':
+        if (e.faction === p) {
+          sfx.lost();
+          this.toast('¡Tus tropas pasan hambre y desertan! Conquista aldeas o licencia tropas.', 'bad');
+        }
+        break;
+      case 'eliminated':
+        if (e.faction !== p) this.toast(`${esc(s.factions[e.faction].name)} ha sido eliminado`, 'good');
+        else if (s.winner === null) {
+          sfx.defeat();
+          this.closeSheet();
+          setTimeout(() => this.showEnd(), 1800);
         }
         break;
       case 'recruited':
@@ -462,6 +483,7 @@ export class App {
   // ---------------- Panel ----------------
 
   openSheet(mode: SheetMode): void {
+    this.disbandArmed = false;
     const wasHidden = $('sheet').classList.contains('hidden');
     this.mode = mode;
     this.sheetSig = '';
@@ -541,7 +563,7 @@ export class App {
       sig = [
         's', st.id, st.garrison.map((q) => `${q.id}:${menOf(q)}:${Math.round((q.hp / maxHp(q.unit)) * 10)}`).join(','),
         st.queue.map((q) => q.unit).join(','), [...this.excluded].join(','), can.map((c) => (c.ok ? 1 : c.reason)).join(','),
-        Math.floor(st.pop / 5), Math.round((st.walls / k.wallHp) * 20), st.battleId,
+        Math.floor(st.pop / 5), Math.round((st.walls / k.wallHp) * 20), st.battleId, f.starving, this.disbandArmed,
       ].join('|');
       const selMen = totalMen(st.garrison.filter((q) => !this.excluded.has(q.id)));
       const allSel = st.garrison.every((q) => !this.excluded.has(q.id));
@@ -550,7 +572,8 @@ export class App {
         <div class="stats">
           ${k.popMax ? `<span>Población <b>${Math.floor(st.pop)}/${k.popMax}</b></span>` : ''}
           <span>Muralla <b>${Math.round((st.walls / k.wallHp) * 100)} %</b></span>
-          <span>Renta <b>+${k.income.toFixed(1)}</b></span>
+          <span>Oro <b>+${k.income.toFixed(1)}</b></span>
+          ${k.food ? `<span>Comida <b>+${k.food.toFixed(1)}</b></span>` : ''}
           ${k.towers ? `<span>Torres <b>${k.towers}</b></span>` : ''}
         </div>
         <div class="sec">GUARNICIÓN · ${totalMen(st.garrison)}<span class="grow"></span>${st.garrison.length ? `<button data-act="all">${allSel ? 'Ninguna' : 'Todas'}</button>` : ''}</div>
@@ -567,8 +590,9 @@ export class App {
           .join('')}</div>
         ${st.queue.length ? `<div class="queue">${st.queue.map((q, i) => `<button class="qitem" data-act="cq" data-i="${i}"><img src="${unitIcon(q.unit, color)}" alt="">${esc(UNITS[q.unit].name)}<span class="x">×</span><span class="bar" data-q="${i}" style="width:${i === 0 ? (q.progress / UNITS[q.unit].time) * 100 : 0}%"></span></button>`).join('')}</div>` : ''}`
         : `<p class="hint">Los fortines no reclutan, pero sus murallas y torres resisten mucho.</p>`}
-        <button class="primary" data-act="send" ${selMen && st.battleId === null ? '' : 'disabled'}>⚔ Enviar ${selMen} hombres</button>
-        <p class="hint">${st.battleId !== null ? 'No puede salir nadie mientras dura el asedio.' : 'También puedes arrastrar desde la plaza hasta el destino.'}</p>`;
+        ${f.starving || this.disbandArmed ? `<button class="secondary" data-act="disband" ${selMen && st.battleId === null ? '' : 'disabled'}>${this.disbandArmed ? `¿Seguro? Licenciar ${selMen} hombres` : `Licenciar ${selMen} hombres (ahorra comida)`}</button>` : ''}
+        <p class="hint">${st.battleId !== null ? 'No puede salir nadie mientras dura el asedio.' : 'También puedes arrastrar desde la plaza hasta el destino.'}</p>
+        <div class="sticky-send"><button class="primary" data-act="send" ${selMen && st.battleId === null ? '' : 'disabled'}>⚔ Enviar ${selMen} hombres</button></div>`;
     } else if (this.mode === 'army' && sel?.kind === 'army') {
       el.classList.add('slim');
       const a = s.armies.find((x) => x.id === sel.id)!;
@@ -676,6 +700,20 @@ export class App {
       cancelRecruit(s, p, sel.id, Number(t.dataset.i));
       sfx.tap();
       this.renderSheet();
+    } else if (act === 'disband' && sel?.kind === 'settlement') {
+      if (!this.disbandArmed) {
+        this.disbandArmed = true;
+      } else {
+        const st = s.settlements[sel.id];
+        const r = disband(s, p, sel.id, this.sendSquads(st));
+        this.disbandArmed = false;
+        if (r.ok) {
+          sfx.tap();
+          this.toast('Tropas licenciadas: vuelven a sus casas', '');
+          this.excluded.clear();
+        } else this.toast(r.reason, 'bad');
+      }
+      this.renderSheet();
     } else if (act === 'send' && sel?.kind === 'settlement') {
       sfx.select();
       this.view.targeting = true;
@@ -708,7 +746,10 @@ export class App {
     const hud = $('hud');
     hud.classList.remove('hidden');
     hud.innerHTML = `
-      <div class="res"><span class="flag" style="background:${f.color}"></span><span><span class="coin"></span><span id="gold">0</span><span class="inc" id="inc"></span></span><span class="men" id="men"></span></div>
+      <div class="hudl">
+        <div class="res"><span class="flag" style="background:${f.color}"></span><span><span class="coin"></span><span id="gold">0</span><span class="inc" id="inc"></span></span><span id="foodbox"><span class="wheat"></span><span id="food">0</span><span class="inc" id="finc"></span></span></div>
+        <div class="res small"><span class="men" id="men"></span><span id="rivals"></span></div>
+      </div>
       <div class="spacer"></div>
       <button class="hbtn" data-act="speed" id="speed" aria-label="Velocidad">×1</button>
       <button class="hbtn" data-act="pause" id="pause" aria-label="Pausa">${ICON_PAUSE}</button>
@@ -726,6 +767,24 @@ export class App {
     for (const st of s.settlements) if (st.owner === p) men += totalMen(st.garrison);
     for (const a of s.armies) if (a.owner === p) men += totalMen(a.squads);
     $('men').textContent = `⚔ ${men}`;
+    const fb = foodBalance(s, p);
+    const net = fb.prod - fb.upkeep;
+    $('food').textContent = String(Math.floor(f.food));
+    $('finc').textContent = `${net >= 0 ? '+' : ''}${net.toFixed(1)}/s`;
+    $('foodbox').classList.toggle('neg', net < 0 || f.starving);
+    if (net < -0.05 && !this.settings.foodTip) {
+      this.settings.foodTip = true;
+      saveSettings(this.settings);
+      this.toast('Tus tropas comen más de lo que producen tus plazas. Las <b>aldeas</b> dan comida; si se acaba, las tropas desertan.', '');
+    }
+    const rivals = s.factions
+      .filter((x) => x.id !== 0 && x.id !== p)
+      .map((x) => {
+        const n = s.settlements.filter((q) => q.owner === x.id).length;
+        return `<span class="rv${x.alive ? '' : ' dead'}"><span class="dot" style="background:${x.color}"></span>${x.alive ? n : '✝'}</span>`;
+      })
+      .join('');
+    if ($('rivals').innerHTML !== rivals) $('rivals').innerHTML = rivals;
     $('pause').innerHTML = this.paused ? ICON_PLAY : ICON_PAUSE;
     $('pause').classList.toggle('on', this.paused);
     $('speed').textContent = `×${this.speed}`;
@@ -771,13 +830,17 @@ export class App {
     if (el.innerHTML !== html) el.innerHTML = html;
     el.classList.remove('hidden');
     el.style.bottom = sheetOpen ? 'auto' : '';
-    el.style.top = sheetOpen ? 'calc(var(--sat) + 64px)' : '';
+    el.style.top = sheetOpen ? 'calc(var(--sat) + 104px)' : '';
   }
 
   // ---------------- Pantallas ----------------
 
   makeDemo(): GameState {
-    const d = newGame({ seed: (Math.random() * 1e9) | 0, players: [{ culture: 'roma', ai: 'normal' }, { culture: 'galos', ai: 'normal' }] });
+    const seed = (Math.random() * 1e9) | 0;
+    const maps = Object.values(MAPS);
+    const map = maps[seed % maps.length];
+    const players = defaultPlayers(map.players, 'roma', 'normal', seed).map((p) => ({ ...p, ai: 'normal' }));
+    const d = newGame({ seed, mapId: map.id, players });
     for (let i = 0; i < 1800; i++) step(d);
     d.events.length = 0;
     return d;
@@ -816,20 +879,34 @@ export class App {
 
   showNew(): void {
     const st = this.settings;
+    const opt = (act: string, v: string, on: boolean, title: string, sub: string) =>
+      `<button data-act="${act}" data-v="${v}" class="${on ? 'on' : ''}">${title}<small>${sub}</small></button>`;
+    const map = MAPS[st.mapId] ?? MAPS.po;
+    const others = (['roma', 'galos', 'cartago'] as const).filter((c) => c !== st.culture).map((c) => CULTURE_NAMES[c]);
+    const rivals =
+      map.players === 2
+        ? [`${others.join(' o ')} (al azar)`]
+        : factionNames(defaultPlayers(map.players, st.culture, st.difficulty, 0)).slice(1);
     $('screen').innerHTML = `
       <div class="card">
         <h2>Nueva partida</h2>
+        <div class="lbl">MAPA</div>
+        <div class="opt">
+          ${Object.values(MAPS).map((m) => opt('map', m.id, m.id === map.id, m.name, `${m.players} pueblos`)).join('')}
+        </div>
         <div class="lbl">TU PUEBLO</div>
         <div class="opt">
-          <button data-act="cul" data-v="roma" class="${st.culture === 'roma' ? 'on' : ''}">Roma<small>Legiones disciplinadas</small></button>
-          <button data-act="cul" data-v="galos" class="${st.culture === 'galos' ? 'on' : ''}">Galos<small>Guerreros feroces</small></button>
+          ${opt('cul', 'roma', st.culture === 'roma', 'Roma', 'Legiones')}
+          ${opt('cul', 'galos', st.culture === 'galos', 'Galos', 'Furia')}
+          ${opt('cul', 'cartago', st.culture === 'cartago', 'Cartago', 'Jinetes')}
         </div>
         <div class="lbl">DIFICULTAD</div>
         <div class="opt">
-          <button data-act="dif" data-v="facil" class="${st.difficulty === 'facil' ? 'on' : ''}">Fácil<small>Para aprender</small></button>
-          <button data-act="dif" data-v="normal" class="${st.difficulty === 'normal' ? 'on' : ''}">Normal<small>Un rival digno</small></button>
+          ${opt('dif', 'facil', st.difficulty === 'facil', 'Fácil', 'Aprender')}
+          ${opt('dif', 'normal', st.difficulty === 'normal', 'Normal', 'Equilibrado')}
+          ${opt('dif', 'dificil', st.difficulty === 'dificil', 'Difícil', 'Sin piedad')}
         </div>
-        <p style="font-size:15px;margin:0">Mapa: <b>Valle del Po</b>. Empiezas al sur con una fortaleza y dos aldeas.</p>
+        <p style="font-size:15px;margin:0">${esc(map.desc)}. Rivales: <b>${rivals.map(esc).join(', ')}</b>. ${map.players > 2 ? 'Ganas si eres el último en pie.' : 'Ganas si tomas su fortaleza.'}</p>
         <button class="primary" data-act="start">¡A la guerra!</button>
         <button class="secondary" data-act="back">Volver</button>
       </div>`;
@@ -845,7 +922,9 @@ export class App {
           <li><b>Toca un estandarte</b> en marcha para cambiar su rumbo.</li>
           <li>Las <b>fortalezas</b> reclutan todas las tropas; las <b>aldeas</b>, solo las básicas; los <b>fortines</b> no reclutan pero tienen murallas y torres.</li>
           <li>Para tomar una plaza amurallada tu infantería debe <b>abrir brecha</b> mientras las torres y los tiradores disparan.</li>
-          <li><b>Ganas</b> al conquistar la fortaleza enemiga y <b>pierdes</b> si cae la tuya.</li>
+          <li>Cada soldado <b>come</b>. Las aldeas y fortalezas producen comida; si se acaba, tus tropas desertan y no puedes reclutar. Puedes <b>licenciar</b> tropas.</li>
+          <li>Piedra, papel y tijera: la <b>caballería</b> arrasa a los tiradores, las <b>lanzas</b> frenan a la caballería y los <b>tiradores</b> desgastan a la infantería pesada. La caballería apenas sirve para derribar murallas.</li>
+          <li><b>Ganas</b> cuando no queda ninguna fortaleza enemiga en pie y <b>pierdes</b> si caen las tuyas.</li>
           <li>Pausa cuando quieras: en pausa también puedes dar órdenes. ×2 acelera el tiempo.</li>
         </ul>
         <button class="primary" data-act="${back === 'menu' ? 'back' : 'resume-menu'}">Entendido</button>
@@ -924,15 +1003,19 @@ export class App {
         t.textContent = `Sonido: ${isMuted() ? 'no' : 'sí'}`;
         break;
       case 'cul':
-        this.settings.culture = t.dataset.v as 'roma' | 'galos';
+        this.settings.culture = t.dataset.v as Settings['culture'];
         this.showNew();
         break;
       case 'dif':
-        this.settings.difficulty = t.dataset.v as 'facil' | 'normal';
+        this.settings.difficulty = t.dataset.v as Settings['difficulty'];
+        this.showNew();
+        break;
+      case 'map':
+        this.settings.mapId = t.dataset.v!;
         this.showNew();
         break;
       case 'start':
-        this.startNew(this.settings.culture, this.settings.difficulty);
+        this.startNew(this.settings.culture, this.settings.difficulty, this.settings.mapId);
         break;
       case 'resume':
         $('screen').classList.add('hidden');

@@ -1,13 +1,19 @@
 import { buildRoads, MAPS } from './maps';
 import { shortestPath } from './path';
 import type { Army, Culture, Difficulty, Faction, GameState, Squad } from './types';
-import { KINDS, maxHp, recruitable, unitFor, UNITS } from './units';
+import { KINDS, maxHp, recruitable, totalMen, unitFor, UNITS, upkeepOf } from './units';
 
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2;
 export const TICK = 0.1;
+export const START_GOLD = 120;
+export const START_FOOD = 120;
+export const FOOD_CAP = 400;
+
+export type PlayableCulture = Exclude<Culture, 'independientes'>;
+export const CULTURES: PlayableCulture[] = ['roma', 'galos', 'cartago'];
 
 export interface PlayerSetup {
-  culture: Exclude<Culture, 'independientes'>;
+  culture: PlayableCulture;
   /** Nombre de los parámetros de IA, o null si es el jugador humano. */
   ai: string | null;
 }
@@ -16,48 +22,72 @@ export interface NewGameOptions {
   seed: number;
   mapId?: string;
   difficulty?: Difficulty;
-  /** Bando sur (1) y norte (2). */
-  players?: [PlayerSetup, PlayerSetup];
+  /** Un jugador por posición inicial del mapa (1…N). */
+  players?: PlayerSetup[];
 }
 
-const COLORS: Record<Culture, string> = {
-  roma: '#b3261e',
-  galos: '#2f7d3a',
-  independientes: '#8a8070',
-};
-const NAMES: Record<Culture, string> = {
-  roma: 'Roma',
-  galos: 'Galos',
-  independientes: 'Independientes',
+/** Colores y nombres por pueblo; si un pueblo se repite, usa el siguiente de la lista. */
+const LOOKS: Record<Culture, { name: string; color: string }[]> = {
+  roma: [{ name: 'Roma', color: '#b3261e' }, { name: 'Liga Latina', color: '#c9741a' }, { name: 'Campania', color: '#2b5a9b' }, { name: 'Etruria', color: '#8b4a2b' }],
+  galos: [{ name: 'Galos', color: '#2f7d3a' }, { name: 'Helvecios', color: '#1f6f8b' }, { name: 'Belgas', color: '#7a8a1f' }, { name: 'Arvernos', color: '#a0522d' }],
+  cartago: [{ name: 'Cartago', color: '#6b3fa0' }, { name: 'Numidia', color: '#b0892a' }, { name: 'Mauretania', color: '#2a7f78' }, { name: 'Gétulos', color: '#9b3b6b' }],
+  independientes: [{ name: 'Independientes', color: '#8a8070' }],
 };
 
-export function factionColor(c: Culture): string {
-  return COLORS[c];
-}
+export const CULTURE_NAMES: Record<Culture, string> = { roma: 'Roma', galos: 'Galos', cartago: 'Cartago', independientes: 'Independientes' };
 
 export function newSquad(state: GameState, unit: string): Squad {
   return { id: state.nextId++, unit, hp: maxHp(unit) };
 }
 
+/** Jugadores por defecto: el humano con su pueblo y rivales con los demás pueblos en orden. */
+export function defaultPlayers(n: number, culture: PlayableCulture, difficulty: string, seed = 0): PlayerSetup[] {
+  const others = CULTURES.filter((c) => c !== culture);
+  if (n === 2) return [{ culture, ai: null }, { culture: others[Math.abs(seed) % others.length], ai: difficulty }];
+  const out: PlayerSetup[] = [{ culture, ai: null }];
+  // Primero los otros pueblos; si hacen falta más, otro bando del propio pueblo del jugador y luego repetir.
+  const order = [...others, culture];
+  for (let i = 1; i < n; i++) out.push({ culture: order[(i - 1) % order.length], ai: difficulty });
+  return out;
+}
+
+/** Nombres que tendrán los bandos (el segundo de un mismo pueblo usa otro nombre). */
+export function factionNames(players: PlayerSetup[]): string[] {
+  const used: Record<string, number> = {};
+  return players.map((p) => {
+    const k = used[p.culture] ?? 0;
+    used[p.culture] = k + 1;
+    return LOOKS[p.culture][k % LOOKS[p.culture].length].name;
+  });
+}
+
 export function newGame(opts: NewGameOptions): GameState {
   const map = MAPS[opts.mapId ?? 'po'];
   const difficulty = opts.difficulty ?? 'normal';
-  const players = opts.players ?? [
-    { culture: 'roma', ai: null },
-    { culture: 'galos', ai: difficulty },
-  ];
-  const mkFaction = (id: number, culture: Culture, ai: string | null, isPlayer: boolean): Faction => ({
-    id,
-    name: NAMES[culture],
-    culture,
-    color: COLORS[culture],
-    gold: culture === 'independientes' ? 0 : 120,
-    isPlayer,
-    alive: true,
-    ai,
-    aiTimer: id * 0.37,
-    stats: { recruited: 0, lost: 0, killed: 0, captured: 0 },
-  });
+  const players = opts.players ?? defaultPlayers(map.players, 'roma', difficulty, opts.seed);
+  if (players.length !== map.players) throw new Error(`El mapa ${map.id} es para ${map.players} jugadores`);
+  const used: Record<string, number> = {};
+  const mkFaction = (id: number, culture: Culture, ai: string | null, isPlayer: boolean): Faction => {
+    const k = used[culture] ?? 0;
+    used[culture] = k + 1;
+    const look = LOOKS[culture][k % LOOKS[culture].length];
+    return {
+      id,
+      name: look.name,
+      culture,
+      color: look.color,
+      gold: culture === 'independientes' ? 0 : START_GOLD,
+      food: culture === 'independientes' ? 0 : START_FOOD,
+      starving: false,
+      isPlayer,
+      alive: true,
+      ai,
+      aiTimer: id * 0.37,
+      stats: { recruited: 0, lost: 0, killed: 0, captured: 0 },
+    };
+  };
+  const factions: Faction[] = [mkFaction(0, 'independientes', null, false)];
+  players.forEach((p, i) => factions.push(mkFaction(i + 1, p.culture, p.ai, p.ai === null)));
   const state: GameState = {
     version: SAVE_VERSION,
     seed: opts.seed,
@@ -72,30 +102,30 @@ export function newGame(opts: NewGameOptions): GameState {
     roads: buildRoads(map, opts.seed),
     armies: [],
     battles: [],
-    factions: [
-      mkFaction(0, 'independientes', null, false),
-      mkFaction(1, players[0].culture, players[0].ai, players[0].ai === null),
-      mkFaction(2, players[1].culture, players[1].ai, players[1].ai === null),
-    ],
+    factions,
     nextId: 1,
     winner: null,
     events: [],
   };
+  const forts = map.nodes.filter((n) => n.kind === 'fortaleza' && n.start > 0);
   map.nodes.forEach((n, id) => {
     const owner = n.start;
     const culture = state.factions[owner].culture;
     const garrison: Squad[] = [];
     const roles = ['basica', 'tiradores', 'pesada'] as const;
     n.garrison.forEach((count, r) => {
-      let role = roles[r];
+      let role: (typeof roles)[number] = roles[r];
       if (culture === 'independientes' && role === 'pesada') role = 'basica';
       for (let i = 0; i < count; i++) garrison.push(newSquad(state, unitFor(culture, role).key));
     });
+    // Estilo: el del pueblo cuya fortaleza inicial está más cerca.
+    let nearest = forts[0];
+    for (const f of forts) if (Math.hypot(f.x - n.x, f.y - n.y) < Math.hypot(nearest.x - n.x, nearest.y - n.y) - 1) nearest = f;
     state.settlements.push({
       id,
       name: n.name,
       kind: n.kind,
-      style: state.factions[n.y >= map.height / 2 ? 1 : 2].culture,
+      style: state.factions[nearest.start].culture,
       x: n.x,
       y: n.y,
       owner,
@@ -123,6 +153,7 @@ export function canRecruit(state: GameState, faction: number, sid: number, unit:
   if (!u || !recruitable(f.culture, s.kind).some((x) => x.key === unit)) return fail('No se puede reclutar aquí');
   if (s.queue.length >= 5) return fail('Cola llena');
   if (s.garrison.length + s.queue.length >= KINDS[s.kind].maxGarrison) return fail('Guarnición completa');
+  if (f.starving) return fail('Sin comida');
   if (f.gold < u.cost) return fail('Falta oro');
   if (s.pop < u.men) return fail('Falta población');
   return { ok: true };
@@ -234,6 +265,31 @@ export function armySpeed(a: Army): number {
   let v = Infinity;
   for (const s of a.squads) v = Math.min(v, UNITS[s.unit].speed);
   return v === Infinity ? 0 : v;
+}
+
+/** Comida: producción menos mantenimiento de todas las tropas. */
+export function foodBalance(state: GameState, faction: number): { prod: number; upkeep: number } {
+  let prod = 0;
+  let upkeep = 0;
+  for (const s of state.settlements) {
+    if (s.owner !== faction) continue;
+    prod += KINDS[s.kind].food;
+    upkeep += upkeepOf(s.garrison);
+  }
+  for (const a of state.armies) if (a.owner === faction) upkeep += upkeepOf(a.squads);
+  return { prod, upkeep };
+}
+
+/** Licencia escuadras de la guarnición: sus hombres vuelven a la población. */
+export function disband(state: GameState, faction: number, sid: number, squadIds: number[]): OrderResult {
+  const s = state.settlements[sid];
+  if (!s || s.owner !== faction) return fail('No es tuyo');
+  if (s.battleId !== null) return fail('Está bajo asedio');
+  const out = s.garrison.filter((q) => squadIds.includes(q.id));
+  if (!out.length) return fail('Nada que licenciar');
+  s.garrison = s.garrison.filter((q) => !out.includes(q));
+  s.pop = Math.min(KINDS[s.kind].popMax, s.pop + totalMen(out));
+  return { ok: true };
 }
 
 export function incomeOf(state: GameState, faction: number): number {

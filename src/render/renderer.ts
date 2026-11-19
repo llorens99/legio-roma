@@ -46,7 +46,6 @@ interface Corpse {
   t0: number;
 }
 
-const SQ_DEPTH = 19;
 const CORPSE_LIFE = 25;
 
 export class Renderer {
@@ -102,18 +101,24 @@ export class Renderer {
     const fp = pointOnRoad(road, front);
     this.armyFront.set(a.id, { x: fp.x, y: fp.y });
     const walking = a.battleId === null && !a.waiting;
+    let base = 0;
     a.squads.forEach((sq, k) => {
       const men = menOf(sq);
+      const cav = UNITS[sq.unit].role === 'caballeria';
+      const perRow = cav ? 2 : 3;
+      const rowD = cav ? 7.5 : 4.6;
+      const lat = cav ? 5.5 : 4;
       for (let m = 0; m < men; m++) {
-        const row = Math.floor(m / 3);
-        const col = (m % 3) - 1;
-        const back = k * SQ_DEPTH + row * 4.6 + 2;
+        const row = Math.floor(m / perRow);
+        const col = (m % perRow) - (perRow - 1) / 2;
+        const back = base + row * rowD + 2;
         const p = pointOnRoad(road, front - sign * back);
         const dx = p.dx * sign;
         const dy = p.dy * sign;
-        const bob = walking ? Math.abs(Math.sin(now * 7 + m * 1.3 + k)) * -0.9 : 0;
-        out.push({ x: p.x - dy * col * 4, y: p.y + dx * col * 4, unit: sq.unit, color, flip: dx < 0, ox: 0, oy: bob, squad: sq.id, side: -1 });
+        const bob = walking ? Math.abs(Math.sin(now * (cav ? 11 : 7) + m * 1.3 + k)) * -0.9 : 0;
+        out.push({ x: p.x - dy * col * lat, y: p.y + dx * col * lat, unit: sq.unit, color, flip: dx < 0, ox: 0, oy: bob, squad: sq.id, side: -1 });
       }
+      base += Math.ceil(10 / perRow) * rowD + 4;
     });
   }
 
@@ -122,11 +127,15 @@ export class Renderer {
     const men = menOf(sq);
     const lx = -fy;
     const ly = fx;
+    const cav = UNITS[sq.unit].role === 'caballeria';
+    const perRow = cav ? 3 : 4;
+    const latS = cav ? 5.2 : 3.6;
+    const rowS = cav ? 6.5 : 4.2;
     for (let m = 0; m < men; m++) {
-      const col = (m % 4) - 1.5;
-      const row = Math.floor(m / 4);
-      const x = cx + lx * col * 3.6 - fx * row * 4.2;
-      const y = cy + ly * col * 3.6 - fy * row * 4.2;
+      const col = (m % perRow) - (perRow - 1) / 2;
+      const row = Math.floor(m / perRow);
+      const x = cx + lx * col * latS - fx * row * rowS;
+      const y = cy + ly * col * latS - fy * row * rowS;
       const lunge = fight * (row === 0 ? Math.max(0, Math.sin(now * 9 + m * 2.1 + sq.id)) * 2.2 : Math.sin(now * 3 + m) * 0.4);
       out.push({ x, y, unit: sq.unit, color, flip: fx < 0, ox: fx * lunge, oy: fy * lunge, squad: sq.id, side });
     }

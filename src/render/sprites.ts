@@ -55,6 +55,8 @@ interface FigSpec {
   shieldColor: string;
   weapon: 'spear' | 'sword' | 'bow' | 'javelin' | 'sling';
   big?: boolean;
+  /** Montado: color del caballo. */
+  horse?: string;
 }
 
 const SKIN = '#d9a77c';
@@ -73,6 +75,18 @@ function specFor(unit: string, color: string): FigSpec {
       return { tunic: '#8c7a4a', legs: '#6b5a3a', body: 'tunic', helmet: 'none', shield: 'none', shieldColor: color, weapon: 'bow' };
     case 'galos_nobles':
       return { tunic: color, legs: '#4a5a7a', body: 'mail', helmet: 'gallic', shield: 'oval', shieldColor: color, weapon: 'sword', big: true };
+    case 'roma_equites':
+      return { tunic: color, legs: SKIN, body: 'tunic', helmet: 'roman', shield: 'round', shieldColor: color, weapon: 'spear', horse: '#5a3a22' };
+    case 'galos_jinetes':
+      return { tunic: color, legs: '#5d6b8a', body: 'mail', helmet: 'gallic', shield: 'oval', shieldColor: color, weapon: 'spear', horse: '#b9b2a6' };
+    case 'cartago_libios':
+      return { tunic: '#ebe3cf', legs: SKIN, body: 'tunic', helmet: 'roman', shield: 'round', shieldColor: color, weapon: 'spear' };
+    case 'cartago_honderos':
+      return { tunic: '#cdb98f', legs: SKIN, body: 'tunic', helmet: 'none', shield: 'none', shieldColor: color, weapon: 'sling' };
+    case 'cartago_lanceros':
+      return { tunic: '#efe8d8', legs: SKIN, body: 'tunic', helmet: 'gallic', shield: 'oval', shieldColor: color, weapon: 'spear', big: true };
+    case 'cartago_numidas':
+      return { tunic: '#e6dcc4', legs: SKIN, body: 'tunic', helmet: 'none', shield: 'round', shieldColor: color, weapon: 'javelin', horse: '#a8743e' };
     case 'ind_honderos':
       return { tunic: '#9b8b6a', legs: SKIN, body: 'tunic', helmet: 'none', shield: 'none', shieldColor: color, weapon: 'sling' };
     default:
@@ -80,15 +94,74 @@ function specFor(unit: string, color: string): FigSpec {
   }
 }
 
+function drawHorse(c: CanvasRenderingContext2D, col: string): void {
+  c.fillStyle = 'rgba(0,0,0,0.28)';
+  c.beginPath();
+  c.ellipse(0, 0, 6.2, 1.4, 0, 0, Math.PI * 2);
+  c.fill();
+  c.strokeStyle = OUT;
+  c.lineWidth = 0.35;
+  const dark = shade(col, -0.25);
+  // patas
+  c.fillStyle = dark;
+  for (const x of [-4.2, -3, 2.6, 3.8]) {
+    c.fillRect(x, -4.4, 0.85, 4.3);
+    c.fillStyle = '#2b2018';
+    c.fillRect(x - 0.05, -0.6, 0.95, 0.7);
+    c.fillStyle = dark;
+  }
+  // cola
+  c.strokeStyle = shade(col, -0.45);
+  c.lineWidth = 0.9;
+  c.beginPath();
+  c.moveTo(-5.2, -6.6);
+  c.quadraticCurveTo(-7.2, -5.2, -6.6, -2.6);
+  c.stroke();
+  c.strokeStyle = OUT;
+  c.lineWidth = 0.35;
+  // cuerpo
+  c.fillStyle = col;
+  c.beginPath();
+  c.ellipse(-0.3, -6, 5.4, 2.4, 0, 0, Math.PI * 2);
+  c.fill();
+  c.stroke();
+  // cuello y cabeza
+  c.beginPath();
+  c.moveTo(3.2, -7.6);
+  c.lineTo(5.6, -10.6);
+  c.lineTo(7.6, -9.4);
+  c.lineTo(7.4, -8.4);
+  c.lineTo(5.6, -8.2);
+  c.lineTo(4.6, -5.4);
+  c.closePath();
+  c.fill();
+  c.stroke();
+  c.fillStyle = shade(col, -0.45);
+  c.beginPath();
+  c.moveTo(3.2, -7.8);
+  c.lineTo(5.4, -10.9);
+  c.lineTo(5.9, -10.4);
+  c.lineTo(3.9, -7.4);
+  c.closePath();
+  c.fill();
+}
+
 function drawFigure(c: CanvasRenderingContext2D, f: FigSpec): void {
   c.lineWidth = 0.35;
   c.strokeStyle = OUT;
-  if (f.big) c.scale(1.12, 1.12);
+  if (f.horse) {
+    drawHorse(c, f.horse);
+    c.translate(-0.3, -5.6);
+    c.scale(0.86, 0.86);
+    c.lineWidth = 0.4;
+  } else if (f.big) c.scale(1.12, 1.12);
   // Sombra
   c.fillStyle = 'rgba(0,0,0,0.28)';
-  c.beginPath();
-  c.ellipse(0, 0, 3, 1.1, 0, 0, Math.PI * 2);
-  c.fill();
+  if (!f.horse) {
+    c.beginPath();
+    c.ellipse(0, 0, 3, 1.1, 0, 0, Math.PI * 2);
+    c.fill();
+  }
   // Arma trasera (lanza)
   if (f.weapon === 'spear') {
     c.strokeStyle = '#5a4128';
@@ -119,13 +192,18 @@ function drawFigure(c: CanvasRenderingContext2D, f: FigSpec): void {
   }
   // Piernas
   c.fillStyle = f.legs;
-  c.fillRect(-1.25, -3.3, 0.95, 3.2);
-  c.fillRect(0.3, -3.3, 0.95, 3.2);
-  c.strokeRect(-1.25, -3.3, 0.95, 3.2);
-  c.strokeRect(0.3, -3.3, 0.95, 3.2);
-  c.fillStyle = '#4a3522';
-  c.fillRect(-1.35, -0.6, 1.15, 0.7);
-  c.fillRect(0.2, -0.6, 1.15, 0.7);
+  if (f.horse) {
+    c.fillRect(-0.2, -3.6, 1, 3.4);
+    c.strokeRect(-0.2, -3.6, 1, 3.4);
+  } else {
+    c.fillRect(-1.25, -3.3, 0.95, 3.2);
+    c.fillRect(0.3, -3.3, 0.95, 3.2);
+    c.strokeRect(-1.25, -3.3, 0.95, 3.2);
+    c.strokeRect(0.3, -3.3, 0.95, 3.2);
+    c.fillStyle = '#4a3522';
+    c.fillRect(-1.35, -0.6, 1.15, 0.7);
+    c.fillRect(0.2, -0.6, 1.15, 0.7);
+  }
   // Torso
   const torso = f.body === 'bare' ? SKIN : f.body === 'segmentata' ? '#a9adb3' : f.body === 'mail' ? '#8f9399' : f.tunic;
   c.fillStyle = f.body === 'bare' || f.body === 'mail' || f.body === 'segmentata' ? (f.body === 'bare' ? '#8b6d4a' : f.tunic) : f.tunic;
@@ -304,7 +382,8 @@ export function soldierSprite(unit: string, color: string, flip: boolean): Sprit
   let s = figCache.get(key);
   if (!s) {
     const spec = specFor(unit, color);
-    s = mk(10, 16, 5, 14.5, FIG_SCALE, (c) => {
+    const w = spec.horse ? 18 : 10;
+    s = mk(w, 18, w / 2, 16.5, FIG_SCALE, (c) => {
       if (flip) c.scale(-1, 1);
       drawFigure(c, spec);
     });
@@ -319,7 +398,20 @@ export function fallenSprite(unit: string, color: string): Sprite {
   let s = figCache.get(key);
   if (!s) {
     const spec = specFor(unit, color);
-    s = mk(16, 10, 8, 5, FIG_SCALE, (c) => {
+    const horse = !!spec.horse;
+    s = mk(horse ? 20 : 16, horse ? 14 : 10, horse ? 10 : 8, horse ? 9 : 5, FIG_SCALE, (c) => {
+      if (horse) {
+        // caballo tumbado de lado y jinete al lado
+        c.save();
+        c.scale(1, 0.55);
+        c.rotate(Math.PI * 0.03);
+        drawHorse(c, spec.horse!);
+        c.restore();
+        c.rotate(-Math.PI / 2);
+        c.translate(1, 7);
+        drawFigure(c, { ...spec, horse: undefined });
+        return;
+      }
       c.rotate(-Math.PI / 2);
       c.translate(0, 5);
       drawFigure(c, spec);
@@ -499,13 +591,129 @@ function temple(c: CanvasRenderingContext2D, x: number, y: number) {
   c.fillRect(x - 6.4, y + 4, 12.8, 1.2);
 }
 
+function flatHouse(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number) {
+  c.fillStyle = 'rgba(0,0,0,0.28)';
+  c.fillRect(x - w / 2 + 1.2, y - h / 2 + 1.5, w, h);
+  c.fillStyle = '#d9cdb2';
+  c.fillRect(x - w / 2, y - h / 2, w, h);
+  c.fillStyle = '#f4eedf';
+  c.fillRect(x - w / 2 + 0.6, y - h / 2 + 0.6, w - 1.2, h - 1.6);
+  c.strokeStyle = 'rgba(90,70,40,0.45)';
+  c.lineWidth = 0.4;
+  c.strokeRect(x - w / 2, y - h / 2, w, h);
+  c.fillStyle = '#8a6d45';
+  c.fillRect(x - w / 2 + w * 0.3, y + h / 2 - 1.4, w * 0.18, 1.4);
+}
+
+function palm(c: CanvasRenderingContext2D, x: number, y: number) {
+  c.fillStyle = 'rgba(0,0,0,0.25)';
+  c.beginPath();
+  c.ellipse(x + 1.5, y + 1.2, 3.5, 1.2, 0, 0, Math.PI * 2);
+  c.fill();
+  c.strokeStyle = '#7a5a32';
+  c.lineWidth = 0.8;
+  c.beginPath();
+  c.moveTo(x, y);
+  c.quadraticCurveTo(x + 1, y - 3, x + 0.6, y - 6);
+  c.stroke();
+  c.strokeStyle = '#4f7a2e';
+  c.lineWidth = 1.1;
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2;
+    c.beginPath();
+    c.moveTo(x + 0.6, y - 6);
+    c.quadraticCurveTo(x + 0.6 + Math.cos(a) * 2.5, y - 7.2 + Math.sin(a) * 1.2, x + 0.6 + Math.cos(a) * 4.2, y - 5.2 + Math.sin(a) * 2);
+    c.stroke();
+  }
+}
+
+function squareTowers(c: CanvasRenderingContext2D, r: number, n: number, col: string) {
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2 - Math.PI / 2 + Math.PI / n;
+    const x = Math.cos(a) * r;
+    const y = Math.sin(a) * r;
+    c.fillStyle = 'rgba(0,0,0,0.3)';
+    c.fillRect(x - 3.6 + 1, y - 3.6 + 1.4, 7.2, 7.2);
+    c.fillStyle = col;
+    c.fillRect(x - 3.6, y - 3.6, 7.2, 7.2);
+    c.strokeStyle = '#7d6a4a';
+    c.lineWidth = 0.6;
+    c.strokeRect(x - 3.6, y - 3.6, 7.2, 7.2);
+    c.fillStyle = shade(col, -0.15);
+    c.fillRect(x - 2, y - 2, 4, 4);
+  }
+}
+
 export function settlementSprite(kind: SettlementKind, style: Culture): Sprite {
   const key = `${kind}|${style}`;
   let s = setCache.get(key);
   if (s) return s;
   const R = RADIUS[kind] + 8;
   const gallic = style === 'galos';
+  const punic = style === 'cartago';
   s = mk(R * 2, R * 2, R, R, SET_SCALE, (c) => {
+    if (punic) {
+      if (kind === 'fortaleza') {
+        c.strokeStyle = '#a8916a';
+        c.lineWidth = 4.6;
+        c.beginPath();
+        c.arc(0, 0, 34, 0, Math.PI * 2);
+        c.stroke();
+        c.strokeStyle = '#d8c7a0';
+        c.lineWidth = 3.4;
+        c.beginPath();
+        c.arc(0, 0, 34, 0, Math.PI * 2);
+        c.stroke();
+        const hs: [number, number, number, number][] = [
+          [-15, -14, 9, 7], [-19, 3, 8, 8], [-7, 17, 10, 6], [11, 17, 9, 7], [19, -2, 7, 9], [13, -17, 9, 6], [-2, -23, 8, 5], [-25, -7, 5, 7],
+        ];
+        for (const [x, y, w, h] of hs) flatHouse(c, x, y, w, h);
+        // templo de Tanit con cúpula
+        c.fillStyle = 'rgba(0,0,0,0.3)';
+        c.fillRect(-5, -3, 12, 10);
+        c.fillStyle = '#efe6d0';
+        c.fillRect(-6, -5, 12, 10);
+        c.fillStyle = '#c9b48a';
+        c.beginPath();
+        c.arc(0, 0, 4, 0, Math.PI * 2);
+        c.fill();
+        c.fillStyle = '#e8dcbc';
+        c.beginPath();
+        c.arc(-1, -1, 2.6, 0, Math.PI * 2);
+        c.fill();
+        palm(c, 8, 8);
+        palm(c, -12, 10);
+        squareTowers(c, 34, 8, '#d3c198');
+      } else if (kind === 'aldea') {
+        c.strokeStyle = '#b89a6a';
+        c.lineWidth = 1.8;
+        c.beginPath();
+        c.arc(0, 0, 24, 0, Math.PI * 2);
+        c.stroke();
+        for (const [x, y, w, h] of [[-9, -8, 8, 7], [8, -10, 7, 6], [11, 6, 8, 7], [-8, 9, 7, 6], [0, -1, 6, 5]] as [number, number, number, number][]) flatHouse(c, x, y, w, h);
+        palm(c, 3, 12);
+        palm(c, -15, -1);
+      } else {
+        c.fillStyle = 'rgba(0,0,0,0.3)';
+        c.fillRect(-18 + 1.5, -18 + 2, 36, 36);
+        c.fillStyle = '#c8b48c';
+        c.fillRect(-18, -18, 36, 36);
+        c.fillStyle = '#ddcca6';
+        c.fillRect(-14.5, -14.5, 29, 29);
+        c.strokeStyle = '#8a7350';
+        c.lineWidth = 0.6;
+        c.strokeRect(-18, -18, 36, 36);
+        flatHouse(c, 0, -2, 12, 9);
+        flatHouse(c, -6, 8, 6, 4);
+        palm(c, 7, 10);
+        for (const [x, y] of [[-18, -18], [18, -18], [18, 18], [-18, 18]] as [number, number][]) {
+          c.fillStyle = '#d3c198';
+          c.fillRect(x - 4, y - 4, 8, 8);
+          c.strokeRect(x - 4, y - 4, 8, 8);
+        }
+      }
+      return;
+    }
     if (kind === 'fortaleza') {
       if (gallic) {
         // Oppidum: terraplén y empalizada, cabañas redondas.
