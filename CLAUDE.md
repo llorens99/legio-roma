@@ -22,14 +22,16 @@ Todo en español: textos del juego, comentarios, commits, PR y documentación.
 - Edita archivos grandes con scripts que escriban primero en /tmp y comprueben cada sustitución.
 
 ## Arquitectura
-- TypeScript + Vite + `vite-plugin-singlefile`: el juego entero es un solo `dist/index.html` (≈475 KB, funciona sin conexión).
+- TypeScript + Vite + `vite-plugin-singlefile`: el juego entero es un solo `dist/index.html` (≈490 KB, funciona sin conexión).
 - `src/core/`: reglas puras y deterministas, sin DOM. El generador aleatorio con semilla vive en `GameState.rng`. Tick fijo de 0,1 s (`TICK`).
   - `types.ts` tipos serializables · `units.ts` tropas y tipos de asentamiento (`KINDS`) · `maps.ts` mapas y caminos · `path.ts` rutas
   - `historic.ts` mapas reales (ciudades en lat/lon, calzadas, ríos, cordilleras, rótulos, estilo por región) · `geo/costas.ts` costas generadas con `npx vite-node tools/geo.ts` desde Natural Earth 1:10m (`world-atlas`) · `geoutil.ts` tierra/mar · `campaign.ts` campañas y capítulos
   - `game.ts` partida nueva y órdenes (reclutar, enviar, redirigir) · `sim.ts` `step()` · `combat.ts` batallas y asedios · `ai.ts` IA (`AI_PARAMS`: facil, normal, dificil, jugador) · `save.ts` versión y `migrate()` · `validate.ts` validación de mapas
 - `src/render/`: dibujo con Canvas 2D propio (se descartó Phaser: menos peso y control total). Terreno horneado una vez a 2× (`terrain.ts`), sprites de soldados y asentamientos horneados (`sprites.ts`), `renderer.ts` dibuja por fotograma solo lo visible. Canvas como mucho a 2× de densidad.
 - `src/app.ts`: controlador e interfaz DOM (HUD, panel inferior/lateral, menús). `src/input.ts`: gestos (tocar, arrastrar con inercia, pellizcar, arrastrar para enviar).
-- `src/audio.ts`: sonido sintetizado con WebAudio tras el primer toque. `src/storage.ts`: guardado en `localStorage` (`legio-roma:partida`, `legio-roma:ajustes`).
+- `src/audio.ts`: sonido y música generativa (dórico en re: bordón, lira y tambor; más tambor si hay batallas tuyas) con WebAudio tras el primer toque; música y sonido se apagan por separado.
+- `src/render/minimap.ts`: minimapa (arriba a la derecha en vertical, abajo a la izquierda en horizontal); tocarlo mueve la cámara. `renderer.indicators`: avisos en el borde de batallas propias (⚔) y de ejércitos enemigos que van a por tus plazas (!).
+- `src/tutorial.ts`: tutorial guiado de 8 pasos en el Po (`GameState.tutorial` = paso); resalta plazas en el mapa (`view.highlight`) y botones (clase `hl`). `src/storage.ts`: guardado en `localStorage` (`legio-roma:partida`, `legio-roma:ajustes`).
 - Fuentes Cinzel y EB Garamond dentro del HTML (`@fontsource`, solo latino).
 - Vertical y horizontal; `env(safe-area-inset-*)` en los bordes. En horizontal el panel va a la derecha.
 - Ganchos de prueba: `window.__legio` (`debugAdvance(seg)`, `debugScreenOf(nombre)`).
@@ -51,7 +53,7 @@ Todo en español: textos del juego, comentarios, commits, PR y documentación.
 - Moral (`stepBattle`): un bando de ejércitos con menos del 38 % de su vida máxima en la batalla y 1,5 veces más débil que el rival huye (`retreatArmy`) a la plaza propia más cercana perdiendo un 12 %; los que huyen no se paran a luchar. Retirada ordenada (`orderRetreat`) pierde menos. Las guarniciones no huyen.
 - Tropas especiales (fortaleza nivel 3): Pretorianos (Roma), Druidas (+10 % de ataque a su bando), Elefantes de guerra (Cartago, derriban murallas).
 - IA: fácil no mejora; normal ahorra la mitad de la próxima mejora antes de reclutar; difícil solo mejora con lo que le sobra.
-- Guardado v4 (v1 → v2 añade comida; v2 → v3 mejoras, generales y moral; v3 → v4 el mapa simétrico «hispania» pasa a «cuatro»). `GameState.campaign` marca las partidas de campaña.
+- Guardado v4 (v1 → v2 añade comida; v2 → v3 mejoras, generales y moral; v3 → v4 el mapa simétrico «hispania» pasa a «cuatro»). `GameState.campaign` marca las partidas de campaña; `GameState.history` guarda cada 30 s los hombres de cada bando para la gráfica final.
 
 ## Entrega
 - Cada hito en su rama (`m0`, `m1`…) con su PR sobre el anterior; se aceptan en orden.

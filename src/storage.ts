@@ -11,9 +11,12 @@ export interface Settings {
   difficulty: 'facil' | 'normal' | 'dificil';
   mapId: string;
   foodTip: boolean;
+  music: boolean;
+  minimap: boolean;
+  tutorialDone: boolean;
 }
 
-const DEFAULTS: Settings = { muted: false, tipsDone: 0, culture: 'roma', difficulty: 'normal', mapId: 'po', foodTip: false };
+const DEFAULTS: Settings = { muted: false, tipsDone: 0, culture: 'roma', difficulty: 'normal', mapId: 'po', foodTip: false, music: true, minimap: true, tutorialDone: false };
 
 function safeGet(key: string): string | null {
   try {

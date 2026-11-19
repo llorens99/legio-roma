@@ -1,4 +1,6 @@
-import { initAudio, isMuted, resumeAudio, setMuted, sfx, suspendAudio } from './audio';
+import { initAudio, isMusicOn, isMuted, resumeAudio, setMusicIntensity, setMusicOn, setMuted, sfx, startMusic, suspendAudio } from './audio';
+import { Minimap } from './render/minimap';
+import { setupTutorial, TUTORIAL } from './tutorial';
 import { generalsOf, type PlayableCulture, appointGeneral, canAppointGeneral, canUpgrade, GENERAL_COST, startUpgrade, cancelRecruit, canRecruit, CULTURE_NAMES, defaultPlayers, factionNames, disband, foodBalance, incomeOf, newGame, recruit, redirectArmy, routeFor, sendArmy, TICK } from './core/game';
 import { MAPS } from './core/maps';
 import { CAMPAIGNS, chapterPlayers } from './core/campaign';
@@ -93,6 +95,11 @@ export class App {
   /** Destino suave de la cámara. */
   camGoal: { x: number; y: number } | null = null;
   settings: Settings = loadSettings();
+  minimap: Minimap;
+  /** Paso del tutorial cuya entrada ya se ejecutó. */
+  tutEntered = -1;
+  tutT = 0;
+  tutScrolled = '';
   /** Partida de demostración (IA contra IA) que se ve detrás del menú. */
   demo: GameState | null = null;
   demoView: ViewState = { player: 0, selected: null, targeting: false, drag: null };
@@ -102,9 +109,19 @@ export class App {
     this.renderer = new Renderer(canvas);
     this.renderer.resize(this.cam);
     setMuted(this.settings.muted);
+    setMusicOn(this.settings.music);
+    const mm = $('minimap');
+    this.minimap = new Minimap(mm, mm.querySelector('canvas')!, (x, y) => this.focus(x, y));
     window.addEventListener('resize', () => this.renderer.resize(this.cam));
     window.addEventListener('orientationchange', () => setTimeout(() => this.renderer.resize(this.cam), 200));
-    document.addEventListener('pointerdown', () => initAudio(), { capture: true });
+    document.addEventListener(
+      'pointerdown',
+      () => {
+        initAudio();
+        startMusic();
+      },
+      { capture: true },
+    );
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) {
         this.save();
@@ -162,10 +179,13 @@ export class App {
       this.renderer.draw(s, this.cam, this.view, this.paused ? 0 : this.acc, t / 1000);
       this.hudT -= dt;
       if (this.hudT <= 0) {
-        this.hudT = 0.25;
+        this.hudT = 0.2;
         this.updateHud();
         this.renderSheet();
+        if (this.settings.minimap) this.minimap.draw(s, this.renderer.terrain, this.renderer.terrainKey, this.cam, this.view.player, t / 1000);
+        setMusicIntensity(s.battles.some((b) => b.sides.some((x) => x.faction === this.view.player)) ? 1 : 0);
       }
+      this.updateTutorial(s, dt);
       this.saveT += dt;
       if (this.saveT > 15) {
         this.saveT = 0;
@@ -264,6 +284,9 @@ export class App {
     $('screen').classList.add('hidden');
     $('screen').innerHTML = '';
     $('sheet').classList.add('hidden');
+    $('minimap').classList.toggle('hidden', !this.settings.minimap);
+    this.tutEntered = -1;
+    this.tutT = 0;
     this.buildHud();
     this.updateHud();
   }
@@ -402,6 +425,12 @@ export class App {
     const s = this.state;
     if (!s || s.winner !== null) return;
     const p = this.view.player;
+    const ind = this.renderer.hitIndicator(sx, sy);
+    if (ind) {
+      sfx.tap();
+      this.focus(ind.wx, ind.wy);
+      return;
+    }
     const hitS = this.renderer.hitSettlement(s, this.cam, sx, sy);
     if (this.mode === 'target') {
       if (hitS === null) {
@@ -907,6 +936,15 @@ export class App {
   updateTip(dt: number): void {
     const s = this.state!;
     const el = $('tip');
+    if (s.tutorial !== null && s.tutorial !== undefined && s.winner === null) {
+      const step = TUTORIAL[s.tutorial];
+      const html = `<span class="step">Paso ${s.tutorial + 1} de ${TUTORIAL.length}</span> ${step.text}`;
+      if (el.innerHTML !== html) el.innerHTML = html;
+      el.classList.remove('hidden');
+      const sheetOpen = !$('sheet').classList.contains('hidden');
+      el.classList.toggle('top', sheetOpen);
+      return;
+    }
     const i = this.settings.tipsDone;
     const sheetOpen = !$('sheet').classList.contains('hidden');
     if (i >= TIPS.length || s.winner !== null || (sheetOpen && i !== 1) || this.mode === 'target') {
@@ -923,8 +961,7 @@ export class App {
     const html = TIPS[i](s, this.view.player);
     if (el.innerHTML !== html) el.innerHTML = html;
     el.classList.remove('hidden');
-    el.style.bottom = sheetOpen ? 'auto' : '';
-    el.style.top = sheetOpen ? 'calc(var(--sat) + 104px)' : '';
+    el.classList.toggle('top', sheetOpen);
   }
 
   // ---------------- Pantallas ----------------
@@ -956,6 +993,7 @@ export class App {
     this.closeSheet();
     $('hud').classList.add('hidden');
     $('tip').classList.add('hidden');
+    $('minimap').classList.add('hidden');
     const has = !!loadGame();
     const sc = $('screen');
     sc.classList.remove('hidden');
@@ -965,10 +1003,12 @@ export class App {
         <h1>LEGIO</h1>
         <div class="sub">FORTALEZAS DE ROMA</div>
         ${has ? '<button class="primary" data-act="continue">Continuar partida</button>' : ''}
-        <button class="${has ? 'secondary' : 'primary'}" data-act="campaigns">Campaña</button>
+        ${!this.settings.tutorialDone ? `<button class="${has ? 'secondary' : 'primary'}" data-act="tutorial">Tutorial</button>` : ''}
+        <button class="${has || !this.settings.tutorialDone ? 'secondary' : 'primary'}" data-act="campaigns">Campaña</button>
         <button class="secondary" data-act="new">Batalla libre</button>
+        ${this.settings.tutorialDone ? '<button class="secondary" data-act="tutorial">Tutorial</button>' : ''}
         <button class="secondary" data-act="help">Cómo se juega</button>
-        <button class="secondary" data-act="mute">Sonido: ${isMuted() ? 'no' : 'sí'}</button>
+        <div class="row2"><button class="secondary" data-act="mute">Sonido: ${isMuted() ? 'no' : 'sí'}</button><button class="secondary" data-act="music">Música: ${isMusicOn() ? 'sí' : 'no'}</button></div>
         <div class="ver">M0 · versión de prueba</div>
       </div>`;
   }
@@ -1010,6 +1050,46 @@ export class App {
         <button class="primary" data-act="start">¡A la guerra!</button>
         <button class="secondary" data-act="back">Volver</button>
       </div>`;
+  }
+
+  startTutorial(): void {
+    const seed = (Math.random() * 2 ** 31) | 0;
+    this.state = newGame({ seed, mapId: 'po', difficulty: 'facil', players: [{ culture: 'roma', ai: null }, { culture: 'galos', ai: 'facil' }] });
+    setupTutorial(this.state);
+    this.state.tutorial = 0;
+    this.begin();
+    this.save();
+  }
+
+  updateTutorial(s: GameState, dt: number): void {
+    document.querySelectorAll('.hl').forEach((e) => e.classList.remove('hl'));
+    if (s.tutorial === null || s.tutorial === undefined || s.winner !== null) {
+      this.view.highlight = null;
+      return;
+    }
+    const step = TUTORIAL[s.tutorial];
+    if (this.tutEntered !== s.tutorial) {
+      this.tutEntered = s.tutorial;
+      this.tutT = 0;
+      step.enter?.(s, this);
+    }
+    this.tutT += dt;
+    const target = step.settlement ? s.settlements.find((x) => x.name === step.settlement) : undefined;
+    // Si el elemento de la interfaz está a la vista, se resalta él; si no, la plaza.
+    const el = step.selector ? (document.querySelector(step.selector) as HTMLElement | null) : null;
+    const visible = !!el && !$('sheet').classList.contains('hidden') && el.offsetParent !== null;
+    if (el && (visible || step.selector === '#speed')) {
+      el.classList.add('hl');
+      if (this.tutScrolled !== `${s.tutorial}|${this.sheetSig}` && visible && step.selector !== '#speed') {
+        this.tutScrolled = `${s.tutorial}|${this.sheetSig}`;
+        el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      }
+    }
+    this.view.highlight = target && !(visible && step.selector !== '#speed') ? target.id : null;
+    if (step.done(s, this, this.tutT) && s.tutorial < TUTORIAL.length - 1) {
+      s.tutorial++;
+      sfx.select();
+    }
   }
 
   showCampaigns(): void {
@@ -1109,6 +1189,7 @@ export class App {
           <li><b>Moral</b>: un ejército muy castigado frente a otro mucho más fuerte huye a la plaza propia más cercana. También puedes ordenar la <b>retirada</b> tocando su estandarte.</li>
           <li><b>Ganas</b> cuando no queda ninguna fortaleza enemiga en pie y <b>pierdes</b> si caen las tuyas.</li>
           <li>Pausa cuando quieras: en pausa también puedes dar órdenes. ×2 acelera el tiempo.</li>
+          <li>El <b>minimapa</b> muestra todo el mapa: tócalo para ir a ese punto. Las <b>flechas en el borde</b> avisan de batallas tuyas (⚔) y de enemigos que vienen a por tus plazas (!): tócalas para ir allí.</li>
         </ul>
         <button class="primary" data-act="${back === 'menu' ? 'back' : 'resume-menu'}">Entendido</button>
       </div>`;
@@ -1121,7 +1202,8 @@ export class App {
       <div class="card">
         <h2>En pausa</h2>
         <button class="primary" data-act="resume">Seguir jugando</button>
-        <button class="secondary" data-act="mute">Sonido: ${isMuted() ? 'no' : 'sí'}</button>
+        <div class="row2"><button class="secondary" data-act="mute">Sonido: ${isMuted() ? 'no' : 'sí'}</button><button class="secondary" data-act="music">Música: ${isMusicOn() ? 'sí' : 'no'}</button></div>
+        <button class="secondary" data-act="minimap">Minimapa: ${this.settings.minimap ? 'sí' : 'no'}</button>
         <button class="secondary" data-act="help-p">Cómo se juega</button>
         <button class="secondary" data-act="quit">Guardar y salir al menú</button>
         <button class="secondary" data-act="surrender">Rendirse</button>
@@ -1134,6 +1216,11 @@ export class App {
     this.endShown = true;
     clearGame();
     if (s.campaign && s.winner === this.view.player) this.campaignWon(s);
+    if (s.tutorial !== null && s.tutorial !== undefined) {
+      this.settings.tutorialDone = true;
+      this.settings.tipsDone = 9;
+      saveSettings(this.settings);
+    }
     const p = this.view.player;
     const win = s.winner === p;
     const st = s.factions[p].stats;
@@ -1144,6 +1231,7 @@ export class App {
         <div class="laurel">${win ? '❧ TRIUNFO ❧' : '❧ DERROTA ❧'}</div>
         <h2 style="font-size:34px">${win ? '¡Victoria!' : 'Tu fortaleza ha caído'}</h2>
         <p style="text-align:center">${win ? 'El enemigo ha sido aplastado. Tu nombre se recordará en el foro.' : 'Reúne a tus legiones y vuelve a intentarlo.'}</p>
+        ${this.armyChart(s)}
         <div class="endstats">
           <span>Duración</span><b>${fmtTime(s.time)}</b>
           <span>Escuadras reclutadas</span><b>${st.recruited}</b>
@@ -1164,6 +1252,29 @@ export class App {
       </div>`;
   }
 
+  /** Gráfica de hombres por bando a lo largo de la partida (SVG). */
+  armyChart(s: GameState): string {
+    const h = s.history ?? [];
+    if (h.length < 2) return '';
+    const W = 300;
+    const H = 110;
+    const tMax = h[h.length - 1].t || 1;
+    let mMax = 10;
+    for (const p of h) for (let i = 1; i < p.men.length; i++) mMax = Math.max(mMax, p.men[i]);
+    const lines = s.factions
+      .filter((f) => f.id !== 0)
+      .map((f) => {
+        const pts = h.map((p) => `${((p.t / tMax) * W).toFixed(1)},${(H - ((p.men[f.id] ?? 0) / mMax) * (H - 6)).toFixed(1)}`).join(' ');
+        return `<polyline points="${pts}" fill="none" stroke="${f.color}" stroke-width="${f.id === this.view.player ? 3 : 2}" stroke-linejoin="round" ${f.id === this.view.player ? '' : 'opacity="0.8"'}/>`;
+      })
+      .join('');
+    const legend = s.factions
+      .filter((f) => f.id !== 0)
+      .map((f) => `<span><i style="background:${f.color}"></i>${esc(f.name)}</span>`)
+      .join('');
+    return `<div class="chart"><div class="lbl">HOMBRES EN ARMAS</div><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${lines}</svg><div class="legend">${legend}</div></div>`;
+  }
+
   onScreenClick(e: Event): void {
     const t = (e.target as HTMLElement).closest('[data-act]') as HTMLElement | null;
     if (!t) return;
@@ -1175,6 +1286,21 @@ export class App {
         break;
       case 'new':
         this.showNew();
+        break;
+      case 'tutorial':
+        this.startTutorial();
+        break;
+      case 'music':
+        setMusicOn(!isMusicOn());
+        this.settings.music = isMusicOn();
+        saveSettings(this.settings);
+        t.textContent = `Música: ${isMusicOn() ? 'sí' : 'no'}`;
+        break;
+      case 'minimap':
+        this.settings.minimap = !this.settings.minimap;
+        saveSettings(this.settings);
+        t.textContent = `Minimapa: ${this.settings.minimap ? 'sí' : 'no'}`;
+        $('minimap').classList.toggle('hidden', !this.settings.minimap);
         break;
       case 'campaigns':
         this.showCampaigns();

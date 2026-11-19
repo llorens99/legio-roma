@@ -339,6 +339,16 @@ describe('IA y determinismo', () => {
   });
 });
 
+describe('historial', () => {
+  it('guarda cada 30 s los hombres de cada bando', () => {
+    const s = peaceful();
+    run(s, 61);
+    expect(s.history!.length).toBe(2);
+    expect(s.history![0].men[1]).toBeGreaterThan(0);
+    expect(s.history![1].t).toBe(60);
+  });
+});
+
 describe('guardado', () => {
   it('guarda y carga sin perder nada', () => {
     const s = peaceful();

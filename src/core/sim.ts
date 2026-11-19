@@ -3,7 +3,7 @@ import { armyS, destroyArmy, joinBattle, mergeIntoGarrison, MEET_DIST, removeArm
 import { armySpeed, FOOD_CAP, foodBalance, newSquad, TICK } from './game';
 import { roadBetween } from './path';
 import type { Army, GameState } from './types';
-import { maxHp, statsOf, UNITS } from './units';
+import { maxHp, statsOf, totalMen, UNITS } from './units';
 
 const MAX_EVENTS = 200;
 
@@ -21,6 +21,7 @@ export function step(state: GameState, dt: number = TICK): void {
   for (const b of state.battles.slice()) stepBattle(state, b, dt);
   runAi(state, dt);
   checkVictory(state);
+  if (state.tick % 300 === 0) sample(state);
   if (state.events.length > MAX_EVENTS) state.events.splice(0, state.events.length - MAX_EVENTS);
 }
 
@@ -213,4 +214,12 @@ function checkVictory(state: GameState): void {
     state.winner = alive.length ? alive[0].id : 0;
     state.events.push({ type: 'victory', faction: state.winner });
   }
+}
+
+/** Guarda cuántos hombres tiene cada bando (para la gráfica final). */
+function sample(state: GameState): void {
+  const men = state.factions.map(() => 0);
+  for (const s of state.settlements) men[s.owner] += totalMen(s.garrison);
+  for (const a of state.armies) men[a.owner] += totalMen(a.squads);
+  (state.history ??= []).push({ t: Math.round(state.time), men });
 }
