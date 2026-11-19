@@ -202,5 +202,7 @@ export interface GameState {
   factions: Faction[];
   nextId: number;
   winner: number | null;
+  /** Partida de campaña: pueblo y capítulo. */
+  campaign?: { culture: string; chapter: number } | null;
   events: GameEvent[];
 }

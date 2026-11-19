@@ -59,3 +59,25 @@ export function loadSettings(): Settings {
 export function saveSettings(s: Settings): void {
   safeSet(SETTINGS_KEY, JSON.stringify(s));
 }
+
+const CAMPAIGN_KEY = 'legio-roma:campana';
+
+export interface CampaignProgress {
+  /** Siguiente capítulo por jugar (0…). */
+  chapter: number;
+  fortLevel: number;
+  generals: { name: string; level: number; xp: number }[];
+  done: boolean;
+}
+
+export function loadCampaigns(): Record<string, CampaignProgress> {
+  try {
+    return JSON.parse(safeGet(CAMPAIGN_KEY) ?? '{}');
+  } catch {
+    return {};
+  }
+}
+
+export function saveCampaigns(c: Record<string, CampaignProgress>): void {
+  safeSet(CAMPAIGN_KEY, JSON.stringify(c));
+}

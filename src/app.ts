@@ -1,6 +1,7 @@
 import { initAudio, isMuted, resumeAudio, setMuted, sfx, suspendAudio } from './audio';
-import { appointGeneral, canAppointGeneral, canUpgrade, GENERAL_COST, startUpgrade, cancelRecruit, canRecruit, CULTURE_NAMES, defaultPlayers, factionNames, disband, foodBalance, incomeOf, newGame, recruit, redirectArmy, routeFor, sendArmy, TICK } from './core/game';
+import { generalsOf, type PlayableCulture, appointGeneral, canAppointGeneral, canUpgrade, GENERAL_COST, startUpgrade, cancelRecruit, canRecruit, CULTURE_NAMES, defaultPlayers, factionNames, disband, foodBalance, incomeOf, newGame, recruit, redirectArmy, routeFor, sendArmy, TICK } from './core/game';
 import { MAPS } from './core/maps';
+import { CAMPAIGNS, chapterPlayers } from './core/campaign';
 import { distancesFrom } from './core/path';
 import { step } from './core/sim';
 import type { Build, GameEvent, GameState, General, Settlement, Squad } from './core/types';
@@ -10,7 +11,7 @@ import { Gestures } from './input';
 import { Camera } from './render/camera';
 import { Renderer, type ViewState } from './render/renderer';
 import { RADIUS, soldierSprite } from './render/sprites';
-import { clearGame, loadGame, loadSettings, saveGame, saveSettings, type Settings } from './storage';
+import { clearGame, loadCampaigns, loadGame, loadSettings, saveCampaigns, saveGame, saveSettings, type Settings } from './storage';
 
 const $ = (id: string) => document.getElementById(id)!;
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
@@ -25,7 +26,9 @@ const TIPS = [
   (s: GameState, p: number) => `Toca tu fortaleza <b>${esc(fortOf(s, p)?.name ?? '')}</b> para ver tus tropas y reclutar.`,
   () => 'Pulsa <b>Enviar</b> y toca una aldea independiente (bandera gris) para conquistarla.',
   (s: GameState, p: number) =>
-    s.factions.length > 3
+    s.campaign
+      ? `Objetivo: <b>${esc(CAMPAIGNS[s.campaign.culture as PlayableCulture].chapters[s.campaign.chapter].goal)}</b> Recluta con tu oro y cuida la comida.`
+      : s.factions.length > 3
       ? 'Recluta con tu oro y cuida la <b>comida</b>. Ganas cuando caigan todas las fortalezas enemigas.'
       : `Recluta con tu oro y conquista la fortaleza enemiga <b>${esc(enemyFortOf(s, p)?.name ?? '')}</b> para ganar.`,
 ];
@@ -238,6 +241,7 @@ export class App {
   }
 
   begin(): void {
+    $('toasts').innerHTML = '';
     const s = this.state!;
     this.demo = null;
     this.view = { player: s.factions.find((f) => f.isPlayer)?.id ?? 1, selected: null, targeting: false, drag: null };
@@ -938,6 +942,7 @@ export class App {
 
   showMenu(): void {
     this.state = null;
+    $('toasts').innerHTML = '';
     if (!this.demo) {
       this.demo = this.makeDemo();
       this.cam.mapW = this.demo.width;
@@ -960,7 +965,8 @@ export class App {
         <h1>LEGIO</h1>
         <div class="sub">FORTALEZAS DE ROMA</div>
         ${has ? '<button class="primary" data-act="continue">Continuar partida</button>' : ''}
-        <button class="${has ? 'secondary' : 'primary'}" data-act="new">Nueva partida</button>
+        <button class="${has ? 'secondary' : 'primary'}" data-act="campaigns">Campaña</button>
+        <button class="secondary" data-act="new">Batalla libre</button>
         <button class="secondary" data-act="help">Cómo se juega</button>
         <button class="secondary" data-act="mute">Sonido: ${isMuted() ? 'no' : 'sí'}</button>
         <div class="ver">M0 · versión de prueba</div>
@@ -979,10 +985,14 @@ export class App {
         : factionNames(defaultPlayers(map.players, st.culture, st.difficulty, 0)).slice(1);
     $('screen').innerHTML = `
       <div class="card">
-        <h2>Nueva partida</h2>
-        <div class="lbl">MAPA</div>
-        <div class="opt">
-          ${Object.values(MAPS).map((m) => opt('map', m.id, m.id === map.id, m.name, `${m.players} pueblos`)).join('')}
+        <h2>Batalla libre</h2>
+        <div class="lbl">MAPAS HISTÓRICOS</div>
+        <div class="opt grid">
+          ${Object.values(MAPS).filter((m) => m.geo).map((m) => opt('map', m.id, m.id === map.id, m.name, `${m.players} pueblos`)).join('')}
+        </div>
+        <div class="lbl">MAPAS EQUILIBRADOS</div>
+        <div class="opt grid">
+          ${Object.values(MAPS).filter((m) => !m.geo).map((m) => opt('map', m.id, m.id === map.id, m.name, `${m.players} pueblos`)).join('')}
         </div>
         <div class="lbl">TU PUEBLO</div>
         <div class="opt">
@@ -996,10 +1006,90 @@ export class App {
           ${opt('dif', 'normal', st.difficulty === 'normal', 'Normal', 'Equilibrado')}
           ${opt('dif', 'dificil', st.difficulty === 'dificil', 'Difícil', 'Sin piedad')}
         </div>
-        <p style="font-size:15px;margin:0">${esc(map.desc)}. Rivales: <b>${rivals.map(esc).join(', ')}</b>. ${map.players > 2 ? 'Ganas si eres el último en pie.' : 'Ganas si tomas su fortaleza.'}</p>
+        <p style="font-size:15px;margin:0">${esc(map.desc)}${map.geo ? ` (empiezas en ${esc(map.nodes.find((n) => n.start === 1 && n.kind === 'fortaleza')?.name ?? '')})` : ''}. Rivales: <b>${rivals.map(esc).join(', ')}</b>. ${map.players > 2 ? 'Ganas si eres el último en pie.' : 'Ganas si tomas su fortaleza.'}</p>
         <button class="primary" data-act="start">¡A la guerra!</button>
         <button class="secondary" data-act="back">Volver</button>
       </div>`;
+  }
+
+  showCampaigns(): void {
+    const prog = loadCampaigns();
+    const dif = this.settings.difficulty;
+    const opt = (v: string, title: string, sub: string) => `<button data-act="campdif" data-v="${v}" class="${dif === v ? 'on' : ''}">${title}<small>${sub}</small></button>`;
+    $('screen').innerHTML = `
+      <div class="card">
+        <h2>Campaña</h2>
+        <p style="margin:0 0 8px;font-size:15px">Capítulos históricos en mapas reales. Tus generales y el nivel de tu capital pasan de un capítulo al siguiente.</p>
+        ${Object.values(CAMPAIGNS)
+          .map((c) => {
+            const p = prog[c.culture];
+            const n = c.chapters.length;
+            const at = p ? Math.min(p.chapter, n) : 0;
+            const status = p?.done ? '✓ Completada' : `Capítulo ${at + 1} de ${n}: ${esc(c.chapters[Math.min(at, n - 1)].title)}`;
+            return `<div class="campcard">
+              <button class="campbtn" data-act="camp" data-v="${c.culture}">
+                <span class="cn">${esc(c.name)}</span><span class="cd">${esc(c.desc)}</span><span class="cs">${status}</span>
+                <span class="dots">${c.chapters.map((_, i) => `<i class="${i < at || p?.done ? 'on' : ''}"></i>`).join('')}</span>
+              </button>
+              ${p ? `<button class="mini" data-act="camprestart" data-v="${c.culture}">Empezar de cero</button>` : ''}
+            </div>`;
+          })
+          .join('')}
+        <div class="lbl">DIFICULTAD</div>
+        <div class="opt">${opt('facil', 'Fácil', 'Aprender')}${opt('normal', 'Normal', 'Equilibrado')}${opt('dificil', 'Difícil', 'Sin piedad')}</div>
+        <button class="secondary" data-act="back">Volver</button>
+      </div>`;
+  }
+
+  showChapter(culture: PlayableCulture): void {
+    $('toasts').innerHTML = '';
+    const c = CAMPAIGNS[culture];
+    const p = loadCampaigns()[culture];
+    const i = Math.min(p?.chapter ?? 0, c.chapters.length - 1);
+    const ch = c.chapters[i];
+    const map = MAPS[ch.mapId];
+    const sc = $('screen');
+    sc.classList.remove('hidden');
+    sc.innerHTML = `
+      <div class="card">
+        <div class="laurel">CAPÍTULO ${['I', 'II', 'III', 'IV', 'V', 'VI'][i]} · ${esc(ch.year)}</div>
+        <h2 style="font-size:30px">${esc(ch.title)}</h2>
+        <p>${esc(ch.intro)}</p>
+        <p><b>Mapa:</b> ${esc(map.name)}<br><b>Objetivo:</b> ${esc(ch.goal)}<br><b>Rivales:</b> ${ch.sides
+          .slice(1)
+          .map((x) => esc(x.name ?? CULTURE_NAMES[x.culture]))
+          .join(', ')}</p>
+        ${p && i > 0 ? `<p style="font-size:15px">Te acompañan: ${p.generals.length ? p.generals.map((g) => `<b>${esc(g.name)}</b> (nivel ${g.level})`).join(', ') : 'ningún general veterano'}${p.fortLevel > 1 ? ` · capital de nivel ${p.fortLevel}` : ''}.</p>` : ''}
+        <button class="primary" data-act="campstart" data-v="${culture}">¡Comenzar!</button>
+        <button class="secondary" data-act="campaigns">Volver</button>
+      </div>`;
+  }
+
+  startCampaign(culture: PlayableCulture): void {
+    const c = CAMPAIGNS[culture];
+    const p = loadCampaigns()[culture];
+    const i = Math.min(p?.chapter ?? 0, c.chapters.length - 1);
+    const ch = c.chapters[i];
+    const seed = (Math.random() * 2 ** 31) | 0;
+    const carry = p && i > 0 ? { fortLevel: p.fortLevel, generals: p.generals } : undefined;
+    this.state = newGame({ seed, difficulty: this.settings.difficulty, mapId: ch.mapId, players: chapterPlayers(ch, this.settings.difficulty, carry) });
+    this.state.campaign = { culture, chapter: i };
+    this.begin();
+    this.save();
+  }
+
+  /** Guarda el avance de campaña tras una victoria: generales vivos y nivel de la capital. */
+  campaignWon(s: GameState): void {
+    const camp = s.campaign;
+    if (!camp) return;
+    const all = loadCampaigns();
+    const p = this.view.player;
+    let fortLevel = 1;
+    for (const st of s.settlements) if (st.owner === p && st.kind === 'fortaleza') fortLevel = Math.max(fortLevel, st.level);
+    const generals = generalsOf(s, p).map((g) => ({ name: g.name, level: g.level, xp: g.xp }));
+    const n = CAMPAIGNS[camp.culture as PlayableCulture].chapters.length;
+    all[camp.culture] = { chapter: camp.chapter + 1, fortLevel, generals: generals.slice(0, 3), done: camp.chapter + 1 >= n };
+    saveCampaigns(all);
   }
 
   showHelp(back: 'menu' | 'pause'): void {
@@ -1043,6 +1133,7 @@ export class App {
     if (!s || this.endShown) return;
     this.endShown = true;
     clearGame();
+    if (s.campaign && s.winner === this.view.player) this.campaignWon(s);
     const p = this.view.player;
     const win = s.winner === p;
     const st = s.factions[p].stats;
@@ -1060,7 +1151,15 @@ export class App {
           <span>Bajas propias</span><b>${st.lost}</b>
           <span>Plazas conquistadas</span><b>${st.captured}</b>
         </div>
-        <button class="primary" data-act="again">Otra partida</button>
+        ${
+          s.campaign
+            ? win
+              ? CAMPAIGNS[s.campaign.culture as PlayableCulture].chapters.length > s.campaign.chapter + 1
+                ? `<button class="primary" data-act="nextchapter" data-v="${s.campaign.culture}">Siguiente capítulo</button>`
+                : `<p style="text-align:center"><b>¡Has completado la campaña!</b></p><button class="primary" data-act="campaigns">Campañas</button>`
+              : `<button class="primary" data-act="nextchapter" data-v="${s.campaign.culture}">Reintentar el capítulo</button>`
+            : `<button class="primary" data-act="again">Otra partida</button>`
+        }
         <button class="secondary" data-act="tomenu">Menú principal</button>
       </div>`;
   }
@@ -1076,6 +1175,30 @@ export class App {
         break;
       case 'new':
         this.showNew();
+        break;
+      case 'campaigns':
+        this.showCampaigns();
+        break;
+      case 'camp':
+        this.showChapter(t.dataset.v as PlayableCulture);
+        break;
+      case 'campdif':
+        this.settings.difficulty = t.dataset.v as Settings['difficulty'];
+        saveSettings(this.settings);
+        this.showCampaigns();
+        break;
+      case 'camprestart': {
+        const all = loadCampaigns();
+        delete all[t.dataset.v!];
+        saveCampaigns(all);
+        this.showCampaigns();
+        break;
+      }
+      case 'campstart':
+        this.startCampaign(t.dataset.v as PlayableCulture);
+        break;
+      case 'nextchapter':
+        this.showChapter(t.dataset.v as PlayableCulture);
         break;
       case 'help':
         this.showHelp('menu');
