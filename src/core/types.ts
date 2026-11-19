@@ -1,9 +1,9 @@
 // Tipos del núcleo. Todo es serializable a JSON (sin clases ni funciones).
 
-export type Culture = 'roma' | 'galos' | 'independientes';
-export type UnitRole = 'basica' | 'tiradores' | 'pesada';
+export type Culture = 'roma' | 'galos' | 'cartago' | 'independientes';
+export type UnitRole = 'basica' | 'tiradores' | 'pesada' | 'caballeria';
 export type SettlementKind = 'fortaleza' | 'aldea' | 'fortin';
-export type Difficulty = 'facil' | 'normal';
+export type Difficulty = 'facil' | 'normal' | 'dificil';
 
 export interface UnitDef {
   key: string;
@@ -24,7 +24,37 @@ export interface UnitDef {
   /** Hombres por escuadra (y población que consume). */
   men: number;
   onlyFortress: boolean;
+  /** Comida por hombre y segundo. */
+  upkeep: number;
+  /** Multiplicador de daño contra cada papel (piedra-papel-tijera). */
+  vs: Partial<Record<UnitRole, number>>;
+  /** Multiplicador de daño contra murallas. */
+  wallDmg: number;
   desc: string;
+  /** Nivel de fortaleza necesario para reclutarla (1 por defecto). */
+  level?: number;
+  /** Unidad especial (élite de cada pueblo). */
+  special?: boolean;
+  /** Bonificación de ataque que da a su bando en batalla (druidas). */
+  aura?: number;
+}
+
+export type AldeaBuilding = 'granja' | 'mercado' | 'empalizada';
+
+export interface General {
+  id: number;
+  name: string;
+  owner: number;
+  level: number;
+  xp: number;
+}
+
+/** Obra en curso en un asentamiento. */
+export interface Build {
+  /** 'nivel' sube de nivel (fortaleza y fortín); el resto, edificio de aldea. */
+  what: 'nivel' | AldeaBuilding;
+  progress: number;
+  time: number;
 }
 
 export interface Squad {
@@ -53,6 +83,13 @@ export interface Settlement {
   battleId: number | null;
   /** Vida actual de la muralla. */
   walls: number;
+  /** Nivel de la plaza (fortaleza 1–3, fortín 1–2, aldea 1). */
+  level: number;
+  /** Edificio de la aldea. */
+  building: AldeaBuilding | null;
+  build: Build | null;
+  /** Generales que esperan en la plaza. */
+  generals: General[];
 }
 
 export interface Pt {
@@ -84,12 +121,17 @@ export interface Army {
   battleId: number | null;
   /** Esperando a que acabe una batalla ajena en el asentamiento de llegada. */
   waiting: boolean;
+  general: General | null;
+  /** Huye tras perder la moral (o por orden de retirada). */
+  retreating: boolean;
 }
 
 export interface BattleSide {
   faction: number;
   armies: number[];
   garrison: boolean;
+  /** Mayor vida total que ha tenido este bando en la batalla (para la moral). */
+  peak: number;
 }
 
 export interface Battle {
@@ -117,6 +159,9 @@ export interface Faction {
   culture: Culture;
   color: string;
   gold: number;
+  food: number;
+  /** Sin comida: las tropas desertan y no se puede reclutar. */
+  starving: boolean;
   isPlayer: boolean;
   alive: boolean;
   /** Parámetros de IA (null = jugador humano o neutral). */
@@ -133,6 +178,11 @@ export type GameEvent =
   | { type: 'breach'; settlement: number }
   | { type: 'field-win'; battle: number; faction: number; loser: number; x: number; y: number }
   | { type: 'eliminated'; faction: number }
+  | { type: 'starving'; faction: number }
+  | { type: 'upgraded'; settlement: number; faction: number; what: string }
+  | { type: 'rout'; faction: number; x: number; y: number; ordered: boolean }
+  | { type: 'general-died'; faction: number; name: string }
+  | { type: 'general-level'; faction: number; name: string; level: number }
   | { type: 'victory'; faction: number };
 
 export interface GameState {

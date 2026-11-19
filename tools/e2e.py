@@ -52,8 +52,9 @@ with sync_playwright() as p:
     check(page.get_by_text('Nueva partida').count() > 0, 'menú principal visible')
 
     tap_text(page, 'Nueva partida')
-    tap_text(page, 'Roma')
-    tap_text(page, 'Normal')
+    tap_sel(page, '[data-act=map][data-v=po]')
+    tap_sel(page, '[data-act=cul][data-v=roma]')
+    tap_sel(page, '[data-act=dif][data-v=normal]')
     shot(page, '02-nueva')
     tap_text(page, 'A la guerra')
     page.wait_for_timeout(800)
@@ -75,6 +76,17 @@ with sync_playwright() as p:
     top = page.eval_on_selector('#sheet', 'e => e.getBoundingClientRect().top')
     check(sy < top, f'la fortaleza seleccionada queda visible sobre el panel ({sy:.0f} < {top:.0f})')
 
+    # M2: mejorar la fortaleza y elegir al general para el ejército.
+    page.evaluate("window.__legio.state.factions[1].gold = 600")
+    page.wait_for_timeout(400)
+    page.locator('[data-act=up][data-what=nivel]').scroll_into_view_if_needed()
+    tap_sel(page, '[data-act=up][data-what=nivel]')
+    check(page.evaluate("!!window.__legio.state.settlements[0].build"), 'obra de nivel 2 en marcha')
+    shot(page, '04b-mejora')
+    page.locator('[data-act=genchip]').first.scroll_into_view_if_needed()
+    tap_sel(page, '[data-act=genchip]')
+    check(page.evaluate("window.__legio.genSel !== null"), 'general elegido para el ejército')
+
     # Enviar tropas a Castra Rubra (fortín independiente).
     tap_sel(page, '[data-act=send]')
     check(page.get_by_text('Toca el destino').count() > 0, 'modo elegir destino')
@@ -82,6 +94,7 @@ with sync_playwright() as p:
     tap_settlement(page, 'Castra Rubra')
     n_armies = page.evaluate("window.__legio.state.armies.filter(a => a.owner === 1).length")
     check(n_armies == 1, 'ejército en marcha')
+    check(page.evaluate("!!window.__legio.state.armies.find(a => a.owner === 1).general"), 'el general marcha con el ejército')
     page.wait_for_timeout(1200)
     shot(page, '06-marcha')
 
@@ -91,6 +104,16 @@ with sync_playwright() as p:
     page.wait_for_timeout(900)
     shot(page, '07-asedio')
     check(page.evaluate("window.__legio.state.battles.length") >= 1, 'hay batalla en curso')
+    # Tocar el estandarte del ejército y ordenar la retirada.
+    page.evaluate("window.__legio.closeSheet()")
+    page.wait_for_timeout(200)
+    fx, fy = page.evaluate("(() => { const a = window.__legio; const ar = a.state.armies.find(x => x.owner === 1); const p = a.renderer.armyFront.get(ar.id); const [x, y] = a.cam.toScreen(p.x, p.y); return [x, y - 20 * Math.min(1.2, a.cam.z) - 10]; })()")
+    page.touchscreen.tap(fx, fy)
+    page.wait_for_timeout(500)
+    shot(page, '07b-ejercito')
+    check(page.locator('[data-act=retreat]').count() == 1, 'botón de retirada en el panel del ejército')
+    tap_sel(page, '[data-act=retreat]')
+    check(page.evaluate("window.__legio.state.armies.some(a => a.owner === 1 && a.retreating)"), 'el ejército se retira')
 
     # Pausa y velocidad
     page.touchscreen.tap(*page.evaluate("(() => { const r = document.getElementById('pause').getBoundingClientRect(); return [r.x + r.width/2, r.y + r.height/2]; })()"))
@@ -109,15 +132,18 @@ with sync_playwright() as p:
     cdp = ctx.new_cdp_session(page)
     def touch(kind, pts):
         cdp.send('Input.dispatchTouchEvent', {'type': kind, 'touchPoints': [{'x': x, 'y': y, 'id': i} for i, (x, y) in enumerate(pts)]})
-    touch('touchStart', [(200, 400)])
+    page.evaluate("window.__legio.closeSheet()")
+    touch('touchStart', [(200, 300)])
     for k in range(1, 11):
-        touch('touchMove', [(200, 400 + k * 15)])
+        touch('touchMove', [(200, 300 + k * 15)])
         page.wait_for_timeout(16)
     touch('touchEnd', [])
     page.wait_for_timeout(300)
     cam1 = page.evaluate("[window.__legio.cam.x, window.__legio.cam.y]")
     check(cam1[1] < cam0[1] - 40, f'paneo con el dedo ({cam0[1]:.0f} → {cam1[1]:.0f})')
     # Pellizco para zoom.
+    z0 = page.evaluate("window.__legio.cam.z")
+    page.evaluate("window.__legio.cam.z = 1.2")
     z0 = page.evaluate("window.__legio.cam.z")
     touch('touchStart', [(150, 420), (240, 420)])
     for k in range(1, 11):
@@ -183,6 +209,26 @@ with sync_playwright() as p:
     page.wait_for_timeout(2500)
     shot(page, '14-fin')
     check(page.get_by_text('Otra partida').count() > 0, 'pantalla de fin de partida')
+
+    # M1: partida en Hispania con Cartago (4 pueblos), comida y rivales en el HUD.
+    tap_text(page, 'Otra partida')
+    tap_sel(page, '[data-act=map][data-v=hispania]')
+    tap_sel(page, '[data-act=cul][data-v=cartago]')
+    tap_sel(page, '[data-act=dif][data-v=dificil]')
+    shot(page, '15-nueva-m1')
+    tap_text(page, 'A la guerra')
+    page.wait_for_timeout(800)
+    check(page.evaluate("window.__legio.state.factions.length") == 5, 'Hispania: 4 bandos y los independientes')
+    check(page.evaluate("window.__legio.state.factions[1].culture") == 'cartago', 'juegas con Cartago')
+    check(page.is_visible('#food'), 'comida en el HUD')
+    check(page.locator('#rivals .rv').count() == 3, 'tres rivales en el HUD')
+    shot(page, '16-hispania')
+    tap_settlement(page, 'Gades')
+    check(page.locator('.rbtn[data-unit=cartago_numidas]').count() == 1, 'se pueden reclutar jinetes númidas en la fortaleza')
+    shot(page, '17-cartago-panel')
+    page.evaluate("(() => { const a = window.__legio; a.closeSheet(); a.state.factions[1].ai = 'normal'; a.debugAdvance(60*6); const b = a.state.battles[0]; if (b) { a.cam.z = 1.8; a.focus(b.x, b.y); } })()")
+    page.wait_for_timeout(1200)
+    shot(page, '18-batalla-m1')
 
     check(not errors, 'sin errores de consola' + ('' if not errors else f': {errors[:3]}'))
     b.close()
