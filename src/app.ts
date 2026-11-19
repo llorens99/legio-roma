@@ -1,6 +1,9 @@
-import { initAudio, isMuted, resumeAudio, setMuted, sfx, suspendAudio } from './audio';
-import { appointGeneral, canAppointGeneral, canUpgrade, GENERAL_COST, startUpgrade, cancelRecruit, canRecruit, CULTURE_NAMES, defaultPlayers, factionNames, disband, foodBalance, incomeOf, newGame, recruit, redirectArmy, routeFor, sendArmy, TICK } from './core/game';
+import { initAudio, isMusicOn, isMuted, resumeAudio, setMusicIntensity, setMusicOn, setMuted, sfx, startMusic, suspendAudio } from './audio';
+import { Minimap } from './render/minimap';
+import { setupTutorial, TUTORIAL } from './tutorial';
+import { generalsOf, type PlayableCulture, appointGeneral, canAppointGeneral, canUpgrade, GENERAL_COST, startUpgrade, cancelRecruit, canRecruit, CULTURE_NAMES, defaultPlayers, factionNames, disband, foodBalance, incomeOf, newGame, recruit, redirectArmy, routeFor, sendArmy, TICK } from './core/game';
 import { MAPS } from './core/maps';
+import { CAMPAIGNS, chapterPlayers } from './core/campaign';
 import { distancesFrom } from './core/path';
 import { step } from './core/sim';
 import type { Build, GameEvent, GameState, General, Settlement, Squad } from './core/types';
@@ -10,7 +13,7 @@ import { Gestures } from './input';
 import { Camera } from './render/camera';
 import { Renderer, type ViewState } from './render/renderer';
 import { RADIUS, soldierSprite } from './render/sprites';
-import { clearGame, loadGame, loadSettings, saveGame, saveSettings, type Settings } from './storage';
+import { clearGame, loadCampaigns, loadGame, loadSettings, saveCampaigns, saveGame, saveSettings, type Settings } from './storage';
 
 const $ = (id: string) => document.getElementById(id)!;
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
@@ -25,7 +28,9 @@ const TIPS = [
   (s: GameState, p: number) => `Toca tu fortaleza <b>${esc(fortOf(s, p)?.name ?? '')}</b> para ver tus tropas y reclutar.`,
   () => 'Pulsa <b>Enviar</b> y toca una aldea independiente (bandera gris) para conquistarla.',
   (s: GameState, p: number) =>
-    s.factions.length > 3
+    s.campaign
+      ? `Objetivo: <b>${esc(CAMPAIGNS[s.campaign.culture as PlayableCulture].chapters[s.campaign.chapter].goal)}</b> Recluta con tu oro y cuida la comida.`
+      : s.factions.length > 3
       ? 'Recluta con tu oro y cuida la <b>comida</b>. Ganas cuando caigan todas las fortalezas enemigas.'
       : `Recluta con tu oro y conquista la fortaleza enemiga <b>${esc(enemyFortOf(s, p)?.name ?? '')}</b> para ganar.`,
 ];
@@ -90,6 +95,11 @@ export class App {
   /** Destino suave de la cámara. */
   camGoal: { x: number; y: number } | null = null;
   settings: Settings = loadSettings();
+  minimap: Minimap;
+  /** Paso del tutorial cuya entrada ya se ejecutó. */
+  tutEntered = -1;
+  tutT = 0;
+  tutScrolled = '';
   /** Partida de demostración (IA contra IA) que se ve detrás del menú. */
   demo: GameState | null = null;
   demoView: ViewState = { player: 0, selected: null, targeting: false, drag: null };
@@ -99,9 +109,19 @@ export class App {
     this.renderer = new Renderer(canvas);
     this.renderer.resize(this.cam);
     setMuted(this.settings.muted);
+    setMusicOn(this.settings.music);
+    const mm = $('minimap');
+    this.minimap = new Minimap(mm, mm.querySelector('canvas')!, (x, y) => this.focus(x, y));
     window.addEventListener('resize', () => this.renderer.resize(this.cam));
     window.addEventListener('orientationchange', () => setTimeout(() => this.renderer.resize(this.cam), 200));
-    document.addEventListener('pointerdown', () => initAudio(), { capture: true });
+    document.addEventListener(
+      'pointerdown',
+      () => {
+        initAudio();
+        startMusic();
+      },
+      { capture: true },
+    );
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) {
         this.save();
@@ -159,10 +179,13 @@ export class App {
       this.renderer.draw(s, this.cam, this.view, this.paused ? 0 : this.acc, t / 1000);
       this.hudT -= dt;
       if (this.hudT <= 0) {
-        this.hudT = 0.25;
+        this.hudT = 0.2;
         this.updateHud();
         this.renderSheet();
+        if (this.settings.minimap) this.minimap.draw(s, this.renderer.terrain, this.renderer.terrainKey, this.cam, this.view.player, t / 1000);
+        setMusicIntensity(s.battles.some((b) => b.sides.some((x) => x.faction === this.view.player)) ? 1 : 0);
       }
+      this.updateTutorial(s, dt);
       this.saveT += dt;
       if (this.saveT > 15) {
         this.saveT = 0;
@@ -238,6 +261,7 @@ export class App {
   }
 
   begin(): void {
+    $('toasts').innerHTML = '';
     const s = this.state!;
     this.demo = null;
     this.view = { player: s.factions.find((f) => f.isPlayer)?.id ?? 1, selected: null, targeting: false, drag: null };
@@ -260,6 +284,9 @@ export class App {
     $('screen').classList.add('hidden');
     $('screen').innerHTML = '';
     $('sheet').classList.add('hidden');
+    $('minimap').classList.toggle('hidden', !this.settings.minimap);
+    this.tutEntered = -1;
+    this.tutT = 0;
     this.buildHud();
     this.updateHud();
   }
@@ -398,6 +425,12 @@ export class App {
     const s = this.state;
     if (!s || s.winner !== null) return;
     const p = this.view.player;
+    const ind = this.renderer.hitIndicator(sx, sy);
+    if (ind) {
+      sfx.tap();
+      this.focus(ind.wx, ind.wy);
+      return;
+    }
     const hitS = this.renderer.hitSettlement(s, this.cam, sx, sy);
     if (this.mode === 'target') {
       if (hitS === null) {
@@ -903,6 +936,15 @@ export class App {
   updateTip(dt: number): void {
     const s = this.state!;
     const el = $('tip');
+    if (s.tutorial !== null && s.tutorial !== undefined && s.winner === null) {
+      const step = TUTORIAL[s.tutorial];
+      const html = `<span class="step">Paso ${s.tutorial + 1} de ${TUTORIAL.length}</span> ${step.text}`;
+      if (el.innerHTML !== html) el.innerHTML = html;
+      el.classList.remove('hidden');
+      const sheetOpen = !$('sheet').classList.contains('hidden');
+      el.classList.toggle('top', sheetOpen);
+      return;
+    }
     const i = this.settings.tipsDone;
     const sheetOpen = !$('sheet').classList.contains('hidden');
     if (i >= TIPS.length || s.winner !== null || (sheetOpen && i !== 1) || this.mode === 'target') {
@@ -919,8 +961,7 @@ export class App {
     const html = TIPS[i](s, this.view.player);
     if (el.innerHTML !== html) el.innerHTML = html;
     el.classList.remove('hidden');
-    el.style.bottom = sheetOpen ? 'auto' : '';
-    el.style.top = sheetOpen ? 'calc(var(--sat) + 104px)' : '';
+    el.classList.toggle('top', sheetOpen);
   }
 
   // ---------------- Pantallas ----------------
@@ -938,6 +979,7 @@ export class App {
 
   showMenu(): void {
     this.state = null;
+    $('toasts').innerHTML = '';
     if (!this.demo) {
       this.demo = this.makeDemo();
       this.cam.mapW = this.demo.width;
@@ -951,6 +993,7 @@ export class App {
     this.closeSheet();
     $('hud').classList.add('hidden');
     $('tip').classList.add('hidden');
+    $('minimap').classList.add('hidden');
     const has = !!loadGame();
     const sc = $('screen');
     sc.classList.remove('hidden');
@@ -960,9 +1003,12 @@ export class App {
         <h1>LEGIO</h1>
         <div class="sub">FORTALEZAS DE ROMA</div>
         ${has ? '<button class="primary" data-act="continue">Continuar partida</button>' : ''}
-        <button class="${has ? 'secondary' : 'primary'}" data-act="new">Nueva partida</button>
+        ${!this.settings.tutorialDone ? `<button class="${has ? 'secondary' : 'primary'}" data-act="tutorial">Tutorial</button>` : ''}
+        <button class="${has || !this.settings.tutorialDone ? 'secondary' : 'primary'}" data-act="campaigns">Campaña</button>
+        <button class="secondary" data-act="new">Batalla libre</button>
+        ${this.settings.tutorialDone ? '<button class="secondary" data-act="tutorial">Tutorial</button>' : ''}
         <button class="secondary" data-act="help">Cómo se juega</button>
-        <button class="secondary" data-act="mute">Sonido: ${isMuted() ? 'no' : 'sí'}</button>
+        <div class="row2"><button class="secondary" data-act="mute">Sonido: ${isMuted() ? 'no' : 'sí'}</button><button class="secondary" data-act="music">Música: ${isMusicOn() ? 'sí' : 'no'}</button></div>
         <div class="ver">M0 · versión de prueba</div>
       </div>`;
   }
@@ -979,10 +1025,14 @@ export class App {
         : factionNames(defaultPlayers(map.players, st.culture, st.difficulty, 0)).slice(1);
     $('screen').innerHTML = `
       <div class="card">
-        <h2>Nueva partida</h2>
-        <div class="lbl">MAPA</div>
-        <div class="opt">
-          ${Object.values(MAPS).map((m) => opt('map', m.id, m.id === map.id, m.name, `${m.players} pueblos`)).join('')}
+        <h2>Batalla libre</h2>
+        <div class="lbl">MAPAS HISTÓRICOS</div>
+        <div class="opt grid">
+          ${Object.values(MAPS).filter((m) => m.geo).map((m) => opt('map', m.id, m.id === map.id, m.name, `${m.players} pueblos`)).join('')}
+        </div>
+        <div class="lbl">MAPAS EQUILIBRADOS</div>
+        <div class="opt grid">
+          ${Object.values(MAPS).filter((m) => !m.geo).map((m) => opt('map', m.id, m.id === map.id, m.name, `${m.players} pueblos`)).join('')}
         </div>
         <div class="lbl">TU PUEBLO</div>
         <div class="opt">
@@ -996,10 +1046,130 @@ export class App {
           ${opt('dif', 'normal', st.difficulty === 'normal', 'Normal', 'Equilibrado')}
           ${opt('dif', 'dificil', st.difficulty === 'dificil', 'Difícil', 'Sin piedad')}
         </div>
-        <p style="font-size:15px;margin:0">${esc(map.desc)}. Rivales: <b>${rivals.map(esc).join(', ')}</b>. ${map.players > 2 ? 'Ganas si eres el último en pie.' : 'Ganas si tomas su fortaleza.'}</p>
+        <p style="font-size:15px;margin:0">${esc(map.desc)}${map.geo ? ` (empiezas en ${esc(map.nodes.find((n) => n.start === 1 && n.kind === 'fortaleza')?.name ?? '')})` : ''}. Rivales: <b>${rivals.map(esc).join(', ')}</b>. ${map.players > 2 ? 'Ganas si eres el último en pie.' : 'Ganas si tomas su fortaleza.'}</p>
         <button class="primary" data-act="start">¡A la guerra!</button>
         <button class="secondary" data-act="back">Volver</button>
       </div>`;
+  }
+
+  startTutorial(): void {
+    const seed = (Math.random() * 2 ** 31) | 0;
+    this.state = newGame({ seed, mapId: 'po', difficulty: 'facil', players: [{ culture: 'roma', ai: null }, { culture: 'galos', ai: 'facil' }] });
+    setupTutorial(this.state);
+    this.state.tutorial = 0;
+    this.begin();
+    this.save();
+  }
+
+  updateTutorial(s: GameState, dt: number): void {
+    document.querySelectorAll('.hl').forEach((e) => e.classList.remove('hl'));
+    if (s.tutorial === null || s.tutorial === undefined || s.winner !== null) {
+      this.view.highlight = null;
+      return;
+    }
+    const step = TUTORIAL[s.tutorial];
+    if (this.tutEntered !== s.tutorial) {
+      this.tutEntered = s.tutorial;
+      this.tutT = 0;
+      step.enter?.(s, this);
+    }
+    this.tutT += dt;
+    const target = step.settlement ? s.settlements.find((x) => x.name === step.settlement) : undefined;
+    // Si el elemento de la interfaz está a la vista, se resalta él; si no, la plaza.
+    const el = step.selector ? (document.querySelector(step.selector) as HTMLElement | null) : null;
+    const visible = !!el && !$('sheet').classList.contains('hidden') && el.offsetParent !== null;
+    if (el && (visible || step.selector === '#speed')) {
+      el.classList.add('hl');
+      if (this.tutScrolled !== `${s.tutorial}|${this.sheetSig}` && visible && step.selector !== '#speed') {
+        this.tutScrolled = `${s.tutorial}|${this.sheetSig}`;
+        el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      }
+    }
+    this.view.highlight = target && !(visible && step.selector !== '#speed') ? target.id : null;
+    if (step.done(s, this, this.tutT) && s.tutorial < TUTORIAL.length - 1) {
+      s.tutorial++;
+      sfx.select();
+    }
+  }
+
+  showCampaigns(): void {
+    const prog = loadCampaigns();
+    const dif = this.settings.difficulty;
+    const opt = (v: string, title: string, sub: string) => `<button data-act="campdif" data-v="${v}" class="${dif === v ? 'on' : ''}">${title}<small>${sub}</small></button>`;
+    $('screen').innerHTML = `
+      <div class="card">
+        <h2>Campaña</h2>
+        <p style="margin:0 0 8px;font-size:15px">Capítulos históricos en mapas reales. Tus generales y el nivel de tu capital pasan de un capítulo al siguiente.</p>
+        ${Object.values(CAMPAIGNS)
+          .map((c) => {
+            const p = prog[c.culture];
+            const n = c.chapters.length;
+            const at = p ? Math.min(p.chapter, n) : 0;
+            const status = p?.done ? '✓ Completada' : `Capítulo ${at + 1} de ${n}: ${esc(c.chapters[Math.min(at, n - 1)].title)}`;
+            return `<div class="campcard">
+              <button class="campbtn" data-act="camp" data-v="${c.culture}">
+                <span class="cn">${esc(c.name)}</span><span class="cd">${esc(c.desc)}</span><span class="cs">${status}</span>
+                <span class="dots">${c.chapters.map((_, i) => `<i class="${i < at || p?.done ? 'on' : ''}"></i>`).join('')}</span>
+              </button>
+              ${p ? `<button class="mini" data-act="camprestart" data-v="${c.culture}">Empezar de cero</button>` : ''}
+            </div>`;
+          })
+          .join('')}
+        <div class="lbl">DIFICULTAD</div>
+        <div class="opt">${opt('facil', 'Fácil', 'Aprender')}${opt('normal', 'Normal', 'Equilibrado')}${opt('dificil', 'Difícil', 'Sin piedad')}</div>
+        <button class="secondary" data-act="back">Volver</button>
+      </div>`;
+  }
+
+  showChapter(culture: PlayableCulture): void {
+    $('toasts').innerHTML = '';
+    const c = CAMPAIGNS[culture];
+    const p = loadCampaigns()[culture];
+    const i = Math.min(p?.chapter ?? 0, c.chapters.length - 1);
+    const ch = c.chapters[i];
+    const map = MAPS[ch.mapId];
+    const sc = $('screen');
+    sc.classList.remove('hidden');
+    sc.innerHTML = `
+      <div class="card">
+        <div class="laurel">CAPÍTULO ${['I', 'II', 'III', 'IV', 'V', 'VI'][i]} · ${esc(ch.year)}</div>
+        <h2 style="font-size:30px">${esc(ch.title)}</h2>
+        <p>${esc(ch.intro)}</p>
+        <p><b>Mapa:</b> ${esc(map.name)}<br><b>Objetivo:</b> ${esc(ch.goal)}<br><b>Rivales:</b> ${ch.sides
+          .slice(1)
+          .map((x) => esc(x.name ?? CULTURE_NAMES[x.culture]))
+          .join(', ')}</p>
+        ${p && i > 0 ? `<p style="font-size:15px">Te acompañan: ${p.generals.length ? p.generals.map((g) => `<b>${esc(g.name)}</b> (nivel ${g.level})`).join(', ') : 'ningún general veterano'}${p.fortLevel > 1 ? ` · capital de nivel ${p.fortLevel}` : ''}.</p>` : ''}
+        <button class="primary" data-act="campstart" data-v="${culture}">¡Comenzar!</button>
+        <button class="secondary" data-act="campaigns">Volver</button>
+      </div>`;
+  }
+
+  startCampaign(culture: PlayableCulture): void {
+    const c = CAMPAIGNS[culture];
+    const p = loadCampaigns()[culture];
+    const i = Math.min(p?.chapter ?? 0, c.chapters.length - 1);
+    const ch = c.chapters[i];
+    const seed = (Math.random() * 2 ** 31) | 0;
+    const carry = p && i > 0 ? { fortLevel: p.fortLevel, generals: p.generals } : undefined;
+    this.state = newGame({ seed, difficulty: this.settings.difficulty, mapId: ch.mapId, players: chapterPlayers(ch, this.settings.difficulty, carry) });
+    this.state.campaign = { culture, chapter: i };
+    this.begin();
+    this.save();
+  }
+
+  /** Guarda el avance de campaña tras una victoria: generales vivos y nivel de la capital. */
+  campaignWon(s: GameState): void {
+    const camp = s.campaign;
+    if (!camp) return;
+    const all = loadCampaigns();
+    const p = this.view.player;
+    let fortLevel = 1;
+    for (const st of s.settlements) if (st.owner === p && st.kind === 'fortaleza') fortLevel = Math.max(fortLevel, st.level);
+    const generals = generalsOf(s, p).map((g) => ({ name: g.name, level: g.level, xp: g.xp }));
+    const n = CAMPAIGNS[camp.culture as PlayableCulture].chapters.length;
+    all[camp.culture] = { chapter: camp.chapter + 1, fortLevel, generals: generals.slice(0, 3), done: camp.chapter + 1 >= n };
+    saveCampaigns(all);
   }
 
   showHelp(back: 'menu' | 'pause'): void {
@@ -1019,6 +1189,7 @@ export class App {
           <li><b>Moral</b>: un ejército muy castigado frente a otro mucho más fuerte huye a la plaza propia más cercana. También puedes ordenar la <b>retirada</b> tocando su estandarte.</li>
           <li><b>Ganas</b> cuando no queda ninguna fortaleza enemiga en pie y <b>pierdes</b> si caen las tuyas.</li>
           <li>Pausa cuando quieras: en pausa también puedes dar órdenes. ×2 acelera el tiempo.</li>
+          <li>El <b>minimapa</b> muestra todo el mapa: tócalo para ir a ese punto. Las <b>flechas en el borde</b> avisan de batallas tuyas (⚔) y de enemigos que vienen a por tus plazas (!): tócalas para ir allí.</li>
         </ul>
         <button class="primary" data-act="${back === 'menu' ? 'back' : 'resume-menu'}">Entendido</button>
       </div>`;
@@ -1031,7 +1202,8 @@ export class App {
       <div class="card">
         <h2>En pausa</h2>
         <button class="primary" data-act="resume">Seguir jugando</button>
-        <button class="secondary" data-act="mute">Sonido: ${isMuted() ? 'no' : 'sí'}</button>
+        <div class="row2"><button class="secondary" data-act="mute">Sonido: ${isMuted() ? 'no' : 'sí'}</button><button class="secondary" data-act="music">Música: ${isMusicOn() ? 'sí' : 'no'}</button></div>
+        <button class="secondary" data-act="minimap">Minimapa: ${this.settings.minimap ? 'sí' : 'no'}</button>
         <button class="secondary" data-act="help-p">Cómo se juega</button>
         <button class="secondary" data-act="quit">Guardar y salir al menú</button>
         <button class="secondary" data-act="surrender">Rendirse</button>
@@ -1043,6 +1215,12 @@ export class App {
     if (!s || this.endShown) return;
     this.endShown = true;
     clearGame();
+    if (s.campaign && s.winner === this.view.player) this.campaignWon(s);
+    if (s.tutorial !== null && s.tutorial !== undefined) {
+      this.settings.tutorialDone = true;
+      this.settings.tipsDone = 9;
+      saveSettings(this.settings);
+    }
     const p = this.view.player;
     const win = s.winner === p;
     const st = s.factions[p].stats;
@@ -1053,6 +1231,7 @@ export class App {
         <div class="laurel">${win ? '❧ TRIUNFO ❧' : '❧ DERROTA ❧'}</div>
         <h2 style="font-size:34px">${win ? '¡Victoria!' : 'Tu fortaleza ha caído'}</h2>
         <p style="text-align:center">${win ? 'El enemigo ha sido aplastado. Tu nombre se recordará en el foro.' : 'Reúne a tus legiones y vuelve a intentarlo.'}</p>
+        ${this.armyChart(s)}
         <div class="endstats">
           <span>Duración</span><b>${fmtTime(s.time)}</b>
           <span>Escuadras reclutadas</span><b>${st.recruited}</b>
@@ -1060,9 +1239,40 @@ export class App {
           <span>Bajas propias</span><b>${st.lost}</b>
           <span>Plazas conquistadas</span><b>${st.captured}</b>
         </div>
-        <button class="primary" data-act="again">Otra partida</button>
+        ${
+          s.campaign
+            ? win
+              ? CAMPAIGNS[s.campaign.culture as PlayableCulture].chapters.length > s.campaign.chapter + 1
+                ? `<button class="primary" data-act="nextchapter" data-v="${s.campaign.culture}">Siguiente capítulo</button>`
+                : `<p style="text-align:center"><b>¡Has completado la campaña!</b></p><button class="primary" data-act="campaigns">Campañas</button>`
+              : `<button class="primary" data-act="nextchapter" data-v="${s.campaign.culture}">Reintentar el capítulo</button>`
+            : `<button class="primary" data-act="again">Otra partida</button>`
+        }
         <button class="secondary" data-act="tomenu">Menú principal</button>
       </div>`;
+  }
+
+  /** Gráfica de hombres por bando a lo largo de la partida (SVG). */
+  armyChart(s: GameState): string {
+    const h = s.history ?? [];
+    if (h.length < 2) return '';
+    const W = 300;
+    const H = 110;
+    const tMax = h[h.length - 1].t || 1;
+    let mMax = 10;
+    for (const p of h) for (let i = 1; i < p.men.length; i++) mMax = Math.max(mMax, p.men[i]);
+    const lines = s.factions
+      .filter((f) => f.id !== 0)
+      .map((f) => {
+        const pts = h.map((p) => `${((p.t / tMax) * W).toFixed(1)},${(H - ((p.men[f.id] ?? 0) / mMax) * (H - 6)).toFixed(1)}`).join(' ');
+        return `<polyline points="${pts}" fill="none" stroke="${f.color}" stroke-width="${f.id === this.view.player ? 3 : 2}" stroke-linejoin="round" ${f.id === this.view.player ? '' : 'opacity="0.8"'}/>`;
+      })
+      .join('');
+    const legend = s.factions
+      .filter((f) => f.id !== 0)
+      .map((f) => `<span><i style="background:${f.color}"></i>${esc(f.name)}</span>`)
+      .join('');
+    return `<div class="chart"><div class="lbl">HOMBRES EN ARMAS</div><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${lines}</svg><div class="legend">${legend}</div></div>`;
   }
 
   onScreenClick(e: Event): void {
@@ -1076,6 +1286,45 @@ export class App {
         break;
       case 'new':
         this.showNew();
+        break;
+      case 'tutorial':
+        this.startTutorial();
+        break;
+      case 'music':
+        setMusicOn(!isMusicOn());
+        this.settings.music = isMusicOn();
+        saveSettings(this.settings);
+        t.textContent = `Música: ${isMusicOn() ? 'sí' : 'no'}`;
+        break;
+      case 'minimap':
+        this.settings.minimap = !this.settings.minimap;
+        saveSettings(this.settings);
+        t.textContent = `Minimapa: ${this.settings.minimap ? 'sí' : 'no'}`;
+        $('minimap').classList.toggle('hidden', !this.settings.minimap);
+        break;
+      case 'campaigns':
+        this.showCampaigns();
+        break;
+      case 'camp':
+        this.showChapter(t.dataset.v as PlayableCulture);
+        break;
+      case 'campdif':
+        this.settings.difficulty = t.dataset.v as Settings['difficulty'];
+        saveSettings(this.settings);
+        this.showCampaigns();
+        break;
+      case 'camprestart': {
+        const all = loadCampaigns();
+        delete all[t.dataset.v!];
+        saveCampaigns(all);
+        this.showCampaigns();
+        break;
+      }
+      case 'campstart':
+        this.startCampaign(t.dataset.v as PlayableCulture);
+        break;
+      case 'nextchapter':
+        this.showChapter(t.dataset.v as PlayableCulture);
         break;
       case 'help':
         this.showHelp('menu');

@@ -202,5 +202,11 @@ export interface GameState {
   factions: Faction[];
   nextId: number;
   winner: number | null;
+  /** Muestras cada 30 s: hombres por bando (índice = id de bando). */
+  history?: { t: number; men: number[] }[];
+  /** Paso del tutorial (si es la partida del tutorial). */
+  tutorial?: number | null;
+  /** Partida de campaña: pueblo y capítulo. */
+  campaign?: { culture: string; chapter: number } | null;
   events: GameEvent[];
 }

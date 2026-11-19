@@ -122,3 +122,149 @@ export const sfx = {
     n.forEach((f, i) => tone(f, 0.55, 'sine', 0.1, i * 0.22));
   },
 };
+
+// ---------------- Música generativa ----------------
+// Dórico en re: bordón grave, lira punteada y tambor de marco. Con batallas, más tambor.
+
+let musicGain: GainNode | null = null;
+let musicOn = true;
+let musicTimer: ReturnType<typeof setInterval> | null = null;
+let nextNote = 0;
+let stepIdx = 0;
+let intensity = 0;
+let melodyDeg = 4;
+let droneNodes: { stop: () => void } | null = null;
+
+const SCALE = [146.83, 164.81, 174.61, 196.0, 220.0, 246.94, 261.63, 293.66, 329.63, 349.23, 392.0];
+const TEMPO = 76;
+
+export function setMusicOn(on: boolean): void {
+  musicOn = on;
+  if (musicGain && ctx) musicGain.gain.setTargetAtTime(on ? 0.22 : 0, ctx.currentTime, 0.3);
+  if (on) startMusic();
+}
+
+export function isMusicOn(): boolean {
+  return musicOn;
+}
+
+/** 0 = calma, 1 = batalla. */
+export function setMusicIntensity(v: number): void {
+  intensity = v;
+}
+
+function pluck(freq: number, t: number, vol: number): void {
+  if (!ctx || !musicGain) return;
+  const g = ctx.createGain();
+  const f = ctx.createBiquadFilter();
+  f.type = 'lowpass';
+  f.frequency.value = 2400;
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(vol, t + 0.008);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 1.4);
+  for (const [mul, type, v] of [[1, 'triangle', 1], [2, 'sine', 0.35], [3, 'sine', 0.12]] as [number, OscillatorType, number][]) {
+    const o = ctx.createOscillator();
+    const og = ctx.createGain();
+    o.type = type;
+    o.frequency.value = freq * mul;
+    og.gain.value = v;
+    o.connect(og).connect(f);
+    o.start(t);
+    o.stop(t + 1.5);
+  }
+  f.connect(g).connect(musicGain);
+}
+
+function drum(t: number, vol: number, low = true): void {
+  if (!ctx || !musicGain || !noiseBuf) return;
+  const o = ctx.createOscillator();
+  const g = ctx.createGain();
+  o.type = 'sine';
+  o.frequency.setValueAtTime(low ? 95 : 160, t);
+  o.frequency.exponentialRampToValueAtTime(low ? 50 : 90, t + 0.25);
+  g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
+  o.connect(g).connect(musicGain);
+  o.start(t);
+  o.stop(t + 0.4);
+  const n = ctx.createBufferSource();
+  n.buffer = noiseBuf;
+  const nf = ctx.createBiquadFilter();
+  nf.type = 'bandpass';
+  nf.frequency.value = low ? 700 : 1600;
+  const ng = ctx.createGain();
+  ng.gain.setValueAtTime(vol * 0.35, t);
+  ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.08);
+  n.connect(nf).connect(ng).connect(musicGain);
+  n.start(t, Math.random() * 0.5);
+  n.stop(t + 0.1);
+}
+
+function startDrone(): void {
+  if (!ctx || !musicGain || droneNodes) return;
+  const f = ctx.createBiquadFilter();
+  f.type = 'lowpass';
+  f.frequency.value = 380;
+  const g = ctx.createGain();
+  g.gain.value = 0.05;
+  const lfo = ctx.createOscillator();
+  const lg = ctx.createGain();
+  lfo.frequency.value = 0.07;
+  lg.gain.value = 0.025;
+  lfo.connect(lg).connect(g.gain);
+  const oscs = [73.42, 110, 73.42 * 1.003].map((fr) => {
+    const o = ctx!.createOscillator();
+    o.type = 'sawtooth';
+    o.frequency.value = fr;
+    o.connect(f);
+    o.start();
+    return o;
+  });
+  f.connect(g).connect(musicGain);
+  lfo.start();
+  droneNodes = {
+    stop: () => {
+      for (const o of oscs) o.stop();
+      lfo.stop();
+    },
+  };
+}
+
+function schedule(): void {
+  if (!ctx || !musicGain || !musicOn) return;
+  const spb = 60 / TEMPO / 2; // corcheas
+  while (nextNote < ctx.currentTime + 0.25) {
+    const t = Math.max(nextNote, ctx.currentTime + 0.02);
+    const beat = stepIdx % 16;
+    // Tambor: pulso lento en calma, ritmo de marcha en batalla.
+    if (beat % 8 === 0) drum(t, 0.16 + 0.1 * intensity);
+    if (intensity > 0.5 && (beat % 4 === 2 || beat === 7 || beat === 15)) drum(t, 0.1, false);
+    // Lira: frases de 16 corcheas con silencios.
+    const phrase = Math.floor(stepIdx / 16) % 4;
+    const play = beat % 2 === 0 ? Math.random() < 0.62 : Math.random() < 0.18 + 0.2 * intensity;
+    if (play && !(phrase === 3 && beat > 10)) {
+      const move = [-2, -1, -1, 0, 1, 1, 2][Math.floor(Math.random() * 7)];
+      melodyDeg = Math.max(0, Math.min(SCALE.length - 1, melodyDeg + move));
+      if (beat === 0) melodyDeg = [4, 0, 3, 4][phrase];
+      pluck(SCALE[melodyDeg], t, 0.11);
+      if (beat === 0 && Math.random() < 0.6) pluck(SCALE[Math.max(0, melodyDeg - 4)], t, 0.06);
+    }
+    nextNote = t + spb;
+    stepIdx++;
+  }
+}
+
+export function startMusic(): void {
+  if (!ctx || !master) return;
+  if (!musicGain) {
+    musicGain = ctx.createGain();
+    musicGain.gain.value = musicOn ? 0.22 : 0;
+    musicGain.connect(master);
+  }
+  if (!musicOn) return;
+  startDrone();
+  if (!musicTimer) {
+    nextNote = ctx.currentTime + 0.1;
+    musicTimer = setInterval(schedule, 60);
+  }
+}
