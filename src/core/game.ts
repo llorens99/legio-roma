@@ -3,7 +3,7 @@ import { shortestPath } from './path';
 import type { Army, Build, Culture, Difficulty, Faction, GameState, General, Squad } from './types';
 import { KINDS, maxHp, recruitable, statsOf, totalMen, unitFor, UNITS, upkeepOf, upgradeOptions } from './units';
 
-export const SAVE_VERSION = 3;
+export const SAVE_VERSION = 4;
 export const TICK = 0.1;
 export const START_GOLD = 120;
 export const START_FOOD = 120;
@@ -16,6 +16,15 @@ export interface PlayerSetup {
   culture: PlayableCulture;
   /** Nombre de los parámetros de IA, o null si es el jugador humano. */
   ai: string | null;
+  /** Nombre y color propios (escenarios); si no, los de `LOOKS`. */
+  name?: string;
+  color?: string;
+  /** Plazas iniciales por nombre (escenarios). La primera fortaleza de la lista es su capital. */
+  owns?: string[];
+  /** Nivel inicial de sus fortalezas y generales veteranos (campaña). */
+  fortLevel?: number;
+  generals?: { name: string; level: number; xp: number }[];
+  gold?: number;
 }
 
 export interface NewGameOptions {
@@ -65,7 +74,22 @@ export function newGame(opts: NewGameOptions): GameState {
   const map = MAPS[opts.mapId ?? 'po'];
   const difficulty = opts.difficulty ?? 'normal';
   const players = opts.players ?? defaultPlayers(map.players, 'roma', difficulty, opts.seed);
-  if (players.length !== map.players) throw new Error(`El mapa ${map.id} es para ${map.players} jugadores`);
+  const custom = players.some((p) => p.owns);
+  if (!custom && players.length !== map.players) throw new Error(`El mapa ${map.id} es para ${map.players} jugadores`);
+  // Escenario: reasignar las plazas iniciales por nombre.
+  let nodes = map.nodes;
+  if (custom) {
+    const IND: Record<string, [number, number, number]> = { fortaleza: [5, 3, 0], aldea: [2, 1, 0], fortin: [3, 2, 0] };
+    nodes = map.nodes.map((n) => ({ ...n, start: 0, garrison: map.geo ? IND[n.kind] : n.garrison }));
+    players.forEach((p, i) => {
+      for (const name of p.owns ?? []) {
+        const n = nodes.find((x) => x.name === name);
+        if (!n) throw new Error(`Plaza desconocida ${name} en ${map.id}`);
+        n.start = i + 1;
+        n.garrison = n.kind === 'fortaleza' ? [3, 2, 0] : [1, 0, 0];
+      }
+    });
+  }
   const used: Record<string, number> = {};
   const mkFaction = (id: number, culture: Culture, ai: string | null, isPlayer: boolean): Faction => {
     const k = used[culture] ?? 0;
@@ -87,7 +111,13 @@ export function newGame(opts: NewGameOptions): GameState {
     };
   };
   const factions: Faction[] = [mkFaction(0, 'independientes', null, false)];
-  players.forEach((p, i) => factions.push(mkFaction(i + 1, p.culture, p.ai, p.ai === null)));
+  players.forEach((p, i) => {
+    const f = mkFaction(i + 1, p.culture, p.ai, p.ai === null);
+    if (p.name) f.name = p.name;
+    if (p.color) f.color = p.color;
+    if (p.gold !== undefined) f.gold = p.gold;
+    factions.push(f);
+  });
   const state: GameState = {
     version: SAVE_VERSION,
     seed: opts.seed,
@@ -107,8 +137,8 @@ export function newGame(opts: NewGameOptions): GameState {
     winner: null,
     events: [],
   };
-  const forts = map.nodes.filter((n) => n.kind === 'fortaleza' && n.start > 0);
-  map.nodes.forEach((n, id) => {
+  const forts = nodes.filter((n) => n.kind === 'fortaleza' && n.start > 0);
+  nodes.forEach((n, id) => {
     const owner = n.start;
     const culture = state.factions[owner].culture;
     const garrison: Squad[] = [];
@@ -119,13 +149,13 @@ export function newGame(opts: NewGameOptions): GameState {
       for (let i = 0; i < count; i++) garrison.push(newSquad(state, unitFor(culture, role).key));
     });
     // Estilo: el del pueblo cuya fortaleza inicial está más cerca.
-    let nearest = forts[0];
+    let nearest = forts[0] ?? n;
     for (const f of forts) if (Math.hypot(f.x - n.x, f.y - n.y) < Math.hypot(nearest.x - n.x, nearest.y - n.y) - 1) nearest = f;
     state.settlements.push({
       id,
       name: n.name,
       kind: n.kind,
-      style: state.factions[nearest.start].culture,
+      style: n.style ?? state.factions[nearest.start].culture,
       x: n.x,
       y: n.y,
       owner,
@@ -140,11 +170,19 @@ export function newGame(opts: NewGameOptions): GameState {
       generals: [],
     });
   });
-  // Cada pueblo empieza con un general en su fortaleza.
+  // Cada pueblo empieza con un general en su fortaleza (o con sus veteranos de campaña).
   for (const f of state.factions) {
     if (f.id === 0) continue;
-    const fort = state.settlements.find((x) => x.owner === f.id && x.kind === 'fortaleza');
-    if (fort) fort.generals.push(newGeneral(state, f.id));
+    const setup = players[f.id - 1];
+    const capName = setup.owns?.find((n) => nodes.find((x) => x.name === n)?.kind === 'fortaleza');
+    const fort = state.settlements.find((x) => x.owner === f.id && x.kind === 'fortaleza' && (!capName || x.name === capName));
+    if (!fort) continue;
+    if (setup.fortLevel && setup.fortLevel > 1) {
+      fort.level = Math.min(3, setup.fortLevel);
+      fort.walls = statsOf(fort).wallHp;
+    }
+    if (setup.generals?.length) for (const g of setup.generals) fort.generals.push({ id: state.nextId++, name: g.name, owner: f.id, level: g.level, xp: g.xp });
+    else fort.generals.push(newGeneral(state, f.id));
   }
   return state;
 }

@@ -16,14 +16,16 @@ Todo en español: textos del juego, comentarios, commits, PR y documentación.
    - Partidas sin final < 10 %. La IA normal pasa hambre < 10 % del tiempo.
    - Sustituto del jugador (`jugador`, en espejo Roma contra Roma): gana a Fácil ≥ 75 %, a Normal entre 35 % y 65 %, y a Difícil ≤ 42 % (y menos que a Normal).
    - Para probar variantes de la IA, compara en espejo con muchas partidas (≥ 80): con 30–40 el ruido es de ±8 puntos.
+   - Si tocas la campaña o los mapas históricos: `npm run sim -- 40 campana`; en cada capítulo el sustituto del jugador (contra IA normal) gana entre el 25 % y el 90 %, mediana ≤ 45 min, sin final < 15 %. El reparto de plazas de cada capítulo (`campaign.ts`) es la palanca principal: una fortaleza enemiga más o menos cambia el resultado de 0 % a 100 %.
 4. `npm run build` y `python3 tools/e2e.py`: móvil vertical y horizontal con toques reales, errores de consola y capturas en `tools/out/`. **Mira las capturas.**
 5. Con 2 núcleos, no lances simulaciones mientras corre el e2e. Procesos largos en segundo plano escribiendo a un log.
 - Edita archivos grandes con scripts que escriban primero en /tmp y comprueben cada sustitución.
 
 ## Arquitectura
-- TypeScript + Vite + `vite-plugin-singlefile`: el juego entero es un solo `dist/index.html` (≈405 KB, funciona sin conexión).
+- TypeScript + Vite + `vite-plugin-singlefile`: el juego entero es un solo `dist/index.html` (≈475 KB, funciona sin conexión).
 - `src/core/`: reglas puras y deterministas, sin DOM. El generador aleatorio con semilla vive en `GameState.rng`. Tick fijo de 0,1 s (`TICK`).
   - `types.ts` tipos serializables · `units.ts` tropas y tipos de asentamiento (`KINDS`) · `maps.ts` mapas y caminos · `path.ts` rutas
+  - `historic.ts` mapas reales (ciudades en lat/lon, calzadas, ríos, cordilleras, rótulos, estilo por región) · `geo/costas.ts` costas generadas con `npx vite-node tools/geo.ts` desde Natural Earth 1:10m (`world-atlas`) · `geoutil.ts` tierra/mar · `campaign.ts` campañas y capítulos
   - `game.ts` partida nueva y órdenes (reclutar, enviar, redirigir) · `sim.ts` `step()` · `combat.ts` batallas y asedios · `ai.ts` IA (`AI_PARAMS`: facil, normal, dificil, jugador) · `save.ts` versión y `migrate()` · `validate.ts` validación de mapas
 - `src/render/`: dibujo con Canvas 2D propio (se descartó Phaser: menos peso y control total). Terreno horneado una vez a 2× (`terrain.ts`), sprites de soldados y asentamientos horneados (`sprites.ts`), `renderer.ts` dibuja por fotograma solo lo visible. Canvas como mucho a 2× de densidad.
 - `src/app.ts`: controlador e interfaz DOM (HUD, panel inferior/lateral, menús). `src/input.ts`: gestos (tocar, arrastrar con inercia, pellizcar, arrastrar para enviar).
@@ -37,7 +39,10 @@ Todo en español: textos del juego, comentarios, commits, PR y documentación.
 - Asedio: mientras aguanta la muralla, la infantería atacante la golpea (`wallDmg` por tropa; la caballería apenas) y no hace daño; torres y tiradores defensores disparan. Tras la brecha, cuerpo a cuerpo con poca ventaja defensiva.
 - Pueblos: Roma, Galos y Cartago, cuatro papeles cada uno (básica, tiradores, pesada, caballería). Piedra-papel-tijera con `UnitDef.vs`: caballería ×1,8 contra tiradores (y los busca primero), lanzas contra caballería, tiradores contra pesada.
 - Comida: fortalezas y aldeas producen; cada hombre consume (`upkeep`). Sin comida no se recluta, las tropas desertan y no se reponen. Se pueden licenciar tropas (`disband`).
-- Mapas: `po` (2, simetría central), `trinacria` (3) e `hispania` (4) con simetría de giro (`buildRotational`); `MapDef.sym` copia la geometría de los caminos para que todas las posiciones sean iguales.
+- Mapas equilibrados: `po` (2, simetría central), `trinacria` (3) y `cuatro` (4, «Cuatro reinos») con simetría de giro (`buildRotational`); `MapDef.sym` copia la geometría de los caminos para que todas las posiciones sean iguales.
+- Mapas históricos (`MapDef.geo`): `italia`, `sicilia`, `hispania`, `galia`, `africa`. Proyección equirectangular corregida por la latitud. Las ciudades costeras se apartan de la orilla (`inland`) y los caminos que caen al mar se llevan a la costa (`toLand`). La validación exige ciudades y caminos en tierra y una distancia mínima de 100. El terreno dibuja mar, bajíos, playa, ríos con puentes, cordilleras, clima (`med`, `norte`, `arido`) y rótulos; su escala se adapta para no pasar de ~6,5 Mpx.
+- Escenarios: `PlayerSetup.owns` reparte plazas por nombre (el primero es el jugador); `name`, `color`, `gold`, `fortLevel` y `generals` personalizan cada bando. Las plazas no repartidas de un mapa histórico son independientes (fortaleza 5+3, aldea 2+1, fortín 3+2).
+- Campaña (`CAMPAIGNS`): Roma (5 capítulos), Cartago (4) y Galos (3). Al ganar, el progreso (`legio-roma:campana`) guarda el siguiente capítulo, el nivel de la capital y hasta 3 generales vivos, que empiezan el siguiente capítulo en la capital.
 - Colores y nombres por bando (`LOOKS`): un pueblo repetido usa otro nombre y color.
 - IA difícil: no se estira (alcance 550) y no ataca con escuadras sueltas. Normal y difícil reúnen ataques de varias plazas y hacen volver ejércitos si su fortaleza peligra. Sin trampas.
 - Pierdes si no te queda ninguna fortaleza; gana el último bando en pie.
@@ -46,7 +51,7 @@ Todo en español: textos del juego, comentarios, commits, PR y documentación.
 - Moral (`stepBattle`): un bando de ejércitos con menos del 38 % de su vida máxima en la batalla y 1,5 veces más débil que el rival huye (`retreatArmy`) a la plaza propia más cercana perdiendo un 12 %; los que huyen no se paran a luchar. Retirada ordenada (`orderRetreat`) pierde menos. Las guarniciones no huyen.
 - Tropas especiales (fortaleza nivel 3): Pretorianos (Roma), Druidas (+10 % de ataque a su bando), Elefantes de guerra (Cartago, derriban murallas).
 - IA: fácil no mejora; normal ahorra la mitad de la próxima mejora antes de reclutar; difícil solo mejora con lo que le sobra.
-- Guardado v3 (v1 → v2 añade comida; v2 → v3 mejoras, generales y moral).
+- Guardado v4 (v1 → v2 añade comida; v2 → v3 mejoras, generales y moral; v3 → v4 el mapa simétrico «hispania» pasa a «cuatro»). `GameState.campaign` marca las partidas de campaña.
 
 ## Entrega
 - Cada hito en su rama (`m0`, `m1`…) con su PR sobre el anterior; se aceptan en orden.

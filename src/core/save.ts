@@ -20,6 +20,8 @@ export function migrate(raw: any): GameState | null {
   if (!raw || typeof raw !== 'object' || typeof raw.version !== 'number') return null;
   if (raw.version > SAVE_VERSION) return null;
   if (!Array.isArray(raw.settlements) || !Array.isArray(raw.factions)) return null;
+  // v3 → v4: el mapa simétrico de 4 bandos pasó de llamarse «hispania» a «cuatro».
+  if (raw.version < 4 && raw.mapId === 'hispania') raw.mapId = 'cuatro';
   // v2 → v3: mejoras, generales y moral.
   if (raw.version < 3) {
     for (const s of raw.settlements) {

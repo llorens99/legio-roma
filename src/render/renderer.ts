@@ -1,5 +1,5 @@
 import { armySpeed } from '../core/game';
-import { pointOnRoad } from '../core/maps';
+import { MAPS, pointOnRoad } from '../core/maps';
 import type { Army, Battle, GameState, Pt, Squad } from '../core/types';
 import { maxHp, menOf, statsOf, totalMen, UNITS } from '../core/units';
 import type { Camera } from './camera';
@@ -239,7 +239,7 @@ export class Renderer {
     const dpr = this.dpr;
     const z = cam.z;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = '#5b4a33';
+    ctx.fillStyle = MAPS[state.mapId]?.geo ? '#345e79' : '#5b4a33';
     ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
     ctx.setTransform(dpr * z, 0, 0, dpr * z, dpr * (cam.vw / 2 - cam.x * z), dpr * (cam.vh / 2 - cam.y * z));
     ctx.imageSmoothingEnabled = true;
@@ -252,7 +252,7 @@ export class Renderer {
     const ex = Math.min(state.width, x1);
     const ey = Math.min(state.height, y1);
     if (this.terrain && ex > sx && ey > sy) {
-      const S = TERRAIN_SCALE;
+      const S = (this.terrain as any).scale ?? TERRAIN_SCALE;
       ctx.drawImage(this.terrain, sx * S, sy * S, (ex - sx) * S, (ey - sy) * S, sx, sy, ex - sx, ey - sy);
     }
     const visible = (x: number, y: number, m = 60) => x > x0 - m && x < x1 + m && y > y0 - m && y < y1 + m;

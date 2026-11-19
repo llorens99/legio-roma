@@ -1,5 +1,7 @@
+import { buildHistoric, HISTORIC } from './historic';
 import { makeRng } from './rng';
-import type { Pt, Road, SettlementKind } from './types';
+import { onLand, toLand } from './geoutil';
+import type { Culture, Pt, Road, SettlementKind } from './types';
 
 export interface MapNode {
   name: string;
@@ -10,6 +12,8 @@ export interface MapNode {
   start: number;
   /** Guarnición inicial: [básicas, tiradores, pesadas]. */
   garrison: [number, number, number];
+  /** Estilo de construcción fijo (mapas históricos). */
+  style?: Culture;
 }
 
 export interface MapDef {
@@ -29,6 +33,18 @@ export interface MapDef {
   sym?: { pre: number[]; T: (p: Pt) => Pt };
   /** Río decorativo (puntos de control). */
   river?: Pt[];
+  /** Cuánto se curvan los caminos (1 por defecto). */
+  bend?: number;
+  /** Distancia mínima entre plazas para validar (110 por defecto). */
+  minDist?: number;
+  /** Geografía real: tierra (el resto es mar), ríos, cordilleras y clima. */
+  geo?: {
+    land: Pt[][];
+    rivers: Pt[][];
+    ridges: Pt[][];
+    climate: 'med' | 'norte' | 'arido';
+    labels: { text: string; x: number; y: number; rot: number; land: boolean }[];
+  };
 }
 
 // Mapa M0: «Valle del Po». Mitad sur definida a mano; la mitad norte es su simétrico
@@ -149,10 +165,10 @@ const trinacria = buildRotational(
   'Henna',
 );
 
-const hispania = buildRotational(
-  'hispania',
-  'Hispania',
-  'Cuatro pueblos se disputan la península',
+const cuatro = buildRotational(
+  'cuatro',
+  'Cuatro reinos',
+  'Cuatro bandos en un mapa simétrico',
   4,
   1600,
   135,
@@ -166,7 +182,13 @@ const hispania = buildRotational(
   'Toletum',
 );
 
-export const MAPS: Record<string, MapDef> = { po: buildPo(), trinacria, hispania };
+export const MAPS: Record<string, MapDef> = { po: buildPo(), trinacria, cuatro };
+for (const h of HISTORIC) MAPS[h.id] = buildHistoric(h);
+
+/** Mapas simétricos (equilibrados) frente a los históricos. */
+export function isHistoric(id: string): boolean {
+  return !!MAPS[id]?.geo;
+}
 
 /** Construye la geometría de los caminos (curvas suaves deterministas). */
 export function buildRoads(map: MapDef, seed: number): Road[] {
@@ -196,8 +218,9 @@ export function buildRoads(map: MapDef, seed: number): Road[] {
       const len = Math.hypot(dx, dy);
       const nx = -dy / len;
       const ny = dx / len;
-      const off1 = (rnd() - 0.5) * 0.22 * len;
-      const off2 = (rnd() - 0.5) * 0.12 * len;
+      const bend = map.bend ?? 1;
+      const off1 = (rnd() - 0.5) * 0.22 * len * bend;
+      const off2 = (rnd() - 0.5) * 0.12 * len * bend;
       pts = [];
       const N = Math.max(6, Math.round(len / 28));
       for (let i = 0; i <= N; i++) {
@@ -205,6 +228,28 @@ export function buildRoads(map: MapDef, seed: number): Road[] {
         const bend = Math.sin(Math.PI * t) * off1 + Math.sin(2 * Math.PI * t) * off2;
         pts.push({ x: A.x + dx * t + nx * bend, y: A.y + dy * t + ny * bend });
       }
+    }
+    // Mapas reales: los tramos que caen al mar se llevan a la costa (el camino la bordea).
+    if (map.geo && !map.sym) {
+      const land = map.geo.land;
+      for (let pass = 0; pass < 2; pass++) {
+        pts = pts.map((p, i) => (i === 0 || i === pts!.length - 1 ? p : toLand(land, p, 7)));
+        // suavizar un poco sin volver a mojar los puntos
+        pts = pts.map((p, i, arr) => {
+          if (i === 0 || i === arr.length - 1) return p;
+          const q = { x: (arr[i - 1].x + p.x * 2 + arr[i + 1].x) / 4, y: (arr[i - 1].y + p.y * 2 + arr[i + 1].y) / 4 };
+          return onLand(land, q) ? q : p;
+        });
+      }
+      // densificar donde la costa obligó a dar rodeos
+      const dense: Pt[] = [pts[0]];
+      for (let i = 1; i < pts.length; i++) {
+        const a = pts[i - 1];
+        const b = pts[i];
+        const n = Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / 14);
+        for (let k = 1; k <= n; k++) dense.push(i === pts.length - 1 && k === n ? b : toLand(land, { x: a.x + ((b.x - a.x) * k) / n, y: a.y + ((b.y - a.y) * k) / n }, 6));
+      }
+      pts = dense;
     }
     const cum = [0];
     for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y));

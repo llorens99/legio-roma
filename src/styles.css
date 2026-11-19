@@ -355,3 +355,20 @@ h1, h2, h3, .cinzel { font-family: 'Cinzel', Georgia, serif; letter-spacing: 0.0
 .building { display: flex; flex-direction: column; gap: 6px; font-size: 15px; }
 .building .bar { height: 6px; border-radius: 3px; background: #2a1d12; overflow: hidden; }
 .building .bar span { display: block; height: 100%; background: var(--gold); }
+
+.opt.grid { display: grid; grid-template-columns: repeat(3, 1fr); }
+.opt.grid button { min-height: 56px; }
+.campcard { margin: 8px 0; text-align: left; }
+.campbtn {
+  width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  padding: 12px 14px; border-radius: 14px; text-align: left;
+  background: rgba(125, 36, 20, 0.08); border: 2px solid rgba(125, 36, 20, 0.35); color: #3a2410;
+}
+.campbtn:active { transform: scale(0.98); }
+.campbtn .cn { font-family: 'Cinzel', serif; font-weight: 900; font-size: 18px; color: #7d2414; }
+.campbtn .cd { font-size: 15px; color: #6b4a2a; }
+.campbtn .cs { font-size: 15px; font-weight: 600; }
+.campbtn .dots { display: flex; gap: 5px; margin-top: 4px; }
+.campbtn .dots i { width: 12px; height: 12px; border-radius: 50%; background: rgba(120, 85, 40, 0.25); }
+.campbtn .dots i.on { background: #b5532f; }
+.mini { font-size: 13px; color: #7d2414; padding: 4px 6px; margin-top: 2px; text-decoration: underline; }
