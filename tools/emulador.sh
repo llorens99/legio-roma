@@ -24,17 +24,23 @@ tocar() {
 import re, sys
 xml = open(sys.argv[1], encoding='utf-8', errors='ignore').read()
 t = sys.argv[2].lower()
+# El nodo más pequeño que contiene el texto (los contenedores también lo incluyen);
+# primero los que coinciden exactamente.
+best = None
 for m in re.finditer(r'<node [^>]*>', xml):
     n = m.group(0)
-    txt = (re.search(r' text="([^"]*)"', n) or [None, ''])[1]
-    desc = (re.search(r' content-desc="([^"]*)"', n) or [None, ''])[1]
-    if t in txt.lower() or t in desc.lower():
+    txt = (re.search(r' text="([^"]*)"', n) or [None, ''])[1].strip().lower()
+    desc = (re.search(r' content-desc="([^"]*)"', n) or [None, ''])[1].strip().lower()
+    if t in txt or t in desc:
         b = re.search(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', n)
         if b:
             x1, y1, x2, y2 = map(int, b.groups())
             if x2 > x1 and y2 > y1:
-                print((x1 + x2) // 2, (y1 + y2) // 2)
-                break
+                key = (0 if t in (txt, desc) else 1, (x2 - x1) * (y2 - y1))
+                if best is None or key < best[0]:
+                    best = (key, (x1 + x2) // 2, (y1 + y2) // 2)
+if best:
+    print(best[1], best[2])
 PY
 )
     if [ -n "$xy" ]; then
@@ -63,8 +69,17 @@ sleep 20
 cap 01-inicio
 hay "Batalla libre" && ok "menú principal" || mal "menú principal"
 
-tocar "Batalla libre" && ok "abrir batalla libre" || mal "abrir batalla libre"
-sleep 2
+# El WebView a veces da posiciones de una lectura anterior: comprobamos y repetimos.
+abierta=no
+for intento in 1 2 3; do
+  tocar "Batalla libre"
+  sleep 3
+  if hay "A la guerra"; then abierta=si; break; fi
+  cp "$OUT/ui.xml" "$OUT/ui-fallo-$intento.xml"
+  adb shell input keyevent KEYCODE_BACK
+  sleep 3
+done
+[ "$abierta" = si ] && ok "abrir batalla libre" || mal "abrir batalla libre"
 cap 02-nueva
 tocar "A la guerra" && ok "empezar partida" || mal "empezar partida"
 sleep 8
