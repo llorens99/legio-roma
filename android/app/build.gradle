@@ -8,8 +8,9 @@ android {
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         // En GitHub Actions, cada compilación sube el número de versión (para instalar encima).
-        versionCode Integer.parseInt(System.getenv("GITHUB_RUN_NUMBER") ?: "1")
-        versionName "0.6." + (System.getenv("GITHUB_RUN_NUMBER") ?: "0"
+        def runNumber = System.getenv("GITHUB_RUN_NUMBER") ?: "1"
+        versionCode = Integer.parseInt(runNumber)
+        versionName = "0.6." + runNumber
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
