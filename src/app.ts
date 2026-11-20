@@ -1,5 +1,7 @@
 import { initAudio, isMusicOn, isMuted, resumeAudio, setMusicIntensity, setMusicOn, setMuted, sfx, startMusic, suspendAudio } from './audio';
 import { Minimap } from './render/minimap';
+import { Capacitor } from '@capacitor/core';
+import { App as CapApp } from '@capacitor/app';
 import { setupTutorial, TUTORIAL } from './tutorial';
 import { generalsOf, type PlayableCulture, appointGeneral, canAppointGeneral, canUpgrade, GENERAL_COST, startUpgrade, cancelRecruit, canRecruit, CULTURE_NAMES, defaultPlayers, factionNames, disband, foodBalance, incomeOf, newGame, recruit, redirectArmy, routeFor, sendArmy, TICK } from './core/game';
 import { MAPS } from './core/maps';
@@ -148,8 +150,51 @@ export class App {
       if (t?.dataset.x) this.focus(Number(t.dataset.x), Number(t.dataset.y));
     });
     (window as any).__legio = this;
+    void this.setupNative();
     this.showMenu();
     requestAnimationFrame((t) => this.frame(t));
+  }
+
+  // ---------------- Android ----------------
+
+  /** Botón atrás y paso a segundo plano en la app de Android (Capacitor). */
+  async setupNative(): Promise<void> {
+    if (!Capacitor.isNativePlatform()) return;
+    await CapApp.addListener('backButton', () => this.onBack());
+    await CapApp.addListener('appStateChange', ({ isActive }) => {
+      if (!isActive) {
+        this.save();
+        suspendAudio();
+        if (this.state && $('screen').classList.contains('hidden')) this.paused = true;
+      } else resumeAudio();
+    });
+  }
+
+  /** Atrás: cierra paneles, luego vuelve al menú guardando y, en el menú, minimiza. */
+  onBack(): void {
+    sfx.tap();
+    const screen = $('screen');
+    const inMenu = !this.state;
+    if (this.mode === 'target') return this.cancelTarget();
+    if (!$('sheet').classList.contains('hidden')) return this.closeSheet();
+    if (!screen.classList.contains('hidden')) {
+      const main = !!screen.querySelector('[data-act=campaigns]') && !!screen.querySelector('[data-act=new]');
+      if (inMenu && main) {
+        void CapApp.minimizeApp();
+        return;
+      }
+      if (this.state && this.state.winner === null && screen.querySelector('[data-act=resume]')) {
+        screen.classList.add('hidden');
+        screen.innerHTML = '';
+        return;
+      }
+      if (inMenu) return this.showMenu();
+      this.save();
+      return this.showMenu();
+    }
+    // En partida sin nada abierto: guardar y al menú.
+    this.save();
+    this.showMenu();
   }
 
   // ---------------- Bucle ----------------
