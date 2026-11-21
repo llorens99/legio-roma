@@ -108,13 +108,16 @@ class Grid {
 export function bakeTerrain(state: GameState): HTMLCanvasElement {
   const W = state.width;
   const H = state.height;
-  const S = TERRAIN_SCALE;
+  // Escala adaptada: como mucho ~6,5 millones de píxeles para no agotar la memoria del móvil.
+  const S = Math.min(TERRAIN_SCALE, Math.sqrt(6.5e6 / (W * H)));
   const seed = state.seed;
   const rnd = makeRng(seed ^ 0xa11ce);
   const map = MAPS[state.mapId];
-  const canvas = document.createElement('canvas');
-  canvas.width = W * S;
-  canvas.height = H * S;
+  const geo = map.geo;
+  const canvas = document.createElement('canvas') as HTMLCanvasElement & { scale?: number };
+  canvas.width = Math.ceil(W * S);
+  canvas.height = Math.ceil(H * S);
+  canvas.scale = S;
   const c = canvas.getContext('2d')!;
   c.scale(S, S);
 
@@ -127,9 +130,13 @@ export function bakeTerrain(state: GameState): HTMLCanvasElement {
   low.height = lh;
   const lc = low.getContext('2d')!;
   const img = lc.createImageData(lw, lh);
-  const meadow = [143, 157, 90];
-  const dry = [186, 172, 108];
-  const lush = [104, 128, 70];
+  const climate = geo?.climate ?? 'med';
+  const PAL = {
+    med: { meadow: [143, 157, 90], dry: [186, 172, 108], lush: [104, 128, 70] },
+    norte: { meadow: [118, 148, 78], dry: [158, 160, 98], lush: [84, 120, 62] },
+    arido: { meadow: [172, 160, 104], dry: [208, 186, 132], lush: [138, 146, 88] },
+  }[climate];
+  const { meadow, dry, lush } = PAL;
   for (let y = 0; y < lh; y++)
     for (let x = 0; x < lw; x++) {
       const wx = x * LR;
@@ -144,6 +151,11 @@ export function bakeTerrain(state: GameState): HTMLCanvasElement {
         const t = Math.min(1, (n - 0.5) * 3);
         col = meadow.map((v, i) => v + (dry[i] - v) * t);
       }
+      if (climate === 'arido') {
+        // Más desierto hacia el sur.
+        const t = Math.max(0, Math.min(1, wy / H - 0.45)) * 1.2;
+        col = col.map((v, i) => v + ([222, 200, 150][i] - v) * t);
+      }
       const k = 0.9 + m * 0.2;
       const i4 = (y * lw + x) * 4;
       img.data[i4] = col[0] * k;
@@ -153,19 +165,92 @@ export function bakeTerrain(state: GameState): HTMLCanvasElement {
     }
   lc.putImageData(img, 0, 0);
   c.imageSmoothingEnabled = true;
-  c.drawImage(low, 0, 0, W, H);
+  const landPath = () => {
+    c.beginPath();
+    for (const poly of geo!.land) {
+      poly.forEach((p, i) => (i ? c.lineTo(p.x, p.y) : c.moveTo(p.x, p.y)));
+      c.closePath();
+    }
+  };
+  if (geo) {
+    // Mar: degradado y ondas.
+    const sea = c.createLinearGradient(0, 0, W, H);
+    sea.addColorStop(0, '#3c6a85');
+    sea.addColorStop(1, '#335d78');
+    c.fillStyle = sea;
+    c.fillRect(0, 0, W, H);
+    for (let i = 0; i < 2600; i++) {
+      const x = rnd() * W;
+      const y = rnd() * H;
+      c.strokeStyle = `rgba(200,225,235,${0.05 + rnd() * 0.08})`;
+      c.lineWidth = 0.8;
+      c.beginPath();
+      c.moveTo(x, y);
+      c.quadraticCurveTo(x + 3, y - 1.5, x + 6, y);
+      c.stroke();
+    }
+    // Bajíos junto a la costa.
+    c.lineJoin = 'round';
+    for (const [w, col] of [[26, 'rgba(110,160,175,0.35)'], [14, 'rgba(140,185,190,0.45)'], [6, 'rgba(200,215,190,0.6)']] as [number, string][]) {
+      c.strokeStyle = col;
+      c.lineWidth = w;
+      landPath();
+      c.stroke();
+    }
+    c.save();
+    landPath();
+    c.clip('evenodd');
+    c.drawImage(low, 0, 0, W, H);
+    c.restore();
+    // Playa.
+    c.strokeStyle = 'rgba(222,205,150,0.85)';
+    c.lineWidth = 1.6;
+    landPath();
+    c.stroke();
+    c.strokeStyle = 'rgba(70,60,40,0.35)';
+    c.lineWidth = 0.6;
+    landPath();
+    c.stroke();
+  } else c.drawImage(low, 0, 0, W, H);
+  // Máscara de tierra a baja resolución para preguntar deprisa.
+  let isLand = (_p: Pt) => true;
+  if (geo) {
+    const mw = Math.ceil(W / 3);
+    const mh = Math.ceil(H / 3);
+    const mc = document.createElement('canvas');
+    mc.width = mw;
+    mc.height = mh;
+    const mx = mc.getContext('2d')!;
+    mx.scale(1 / 3, 1 / 3);
+    mx.fillStyle = '#fff';
+    mx.beginPath();
+    for (const poly of geo.land) {
+      poly.forEach((p, i) => (i ? mx.lineTo(p.x, p.y) : mx.moveTo(p.x, p.y)));
+      mx.closePath();
+    }
+    mx.fill('evenodd');
+    const data = mx.getImageData(0, 0, mw, mh).data;
+    isLand = (p: Pt) => {
+      const x = Math.floor(p.x / 3);
+      const y = Math.floor(p.y / 3);
+      if (x < 0 || y < 0 || x >= mw || y >= mh) return false;
+      return data[(y * mw + x) * 4] > 128;
+    };
+  }
 
   // Moteado fino de hierba.
   for (let i = 0; i < 9000; i++) {
     const x = rnd() * W;
     const y = rnd() * H;
+    if (!isLand({ x, y })) continue;
     c.fillStyle = rnd() < 0.5 ? 'rgba(60,80,30,0.13)' : 'rgba(230,220,150,0.10)';
     c.fillRect(x, y, 1.5 + rnd() * 2, 0.8 + rnd());
   }
 
   // Obstáculos para decorados.
   const roadPolys = state.roads.map((r) => r.pts);
-  const river = map.river ? catmull(map.river, 12) : [];
+  const rivers: Pt[][] = geo ? geo.rivers.map((r) => catmull(r, 8)) : map.river ? [catmull(map.river, 12)] : [];
+  const river = rivers.flat();
   const busy = new Grid();
   for (const poly of roadPolys)
     for (let i = 1; i < poly.length; i++) {
@@ -187,7 +272,7 @@ export function bakeTerrain(state: GameState): HTMLCanvasElement {
       const a = rnd() * Math.PI * 2;
       const d = RADIUS[s.kind] + 14 + rnd() * 45;
       const p = { x: s.x + Math.cos(a) * d, y: s.y + Math.sin(a) * d };
-      if (busy.near(p, 16) || riverGrid.near(p, 20)) continue;
+      if (busy.near(p, 16) || riverGrid.near(p, 20) || !isLand(p)) continue;
       const w = 16 + rnd() * 18;
       const h = 10 + rnd() * 12;
       c.save();
@@ -213,16 +298,46 @@ export function bakeTerrain(state: GameState): HTMLCanvasElement {
 
   // 3. Colinas y montañas en los bordes.
   const mountains: Pt[] = [];
-  for (let i = 0; i < 700; i++) {
-    const x = rnd() * W;
-    const y = rnd() * H;
-    const edge = Math.min(x, W - x) / W;
-    const n = fbm(x / 180, y / 180, seed + 500);
-    if (n + (0.2 - edge) * 1.6 < 0.72) continue;
-    const p = { x, y };
-    if (busy.near(p, 34) || riverGrid.near(p, 30) || nearSettlement(p, 40)) continue;
-    mountains.push(p);
-  }
+  if (geo) {
+    // Cordilleras reales: montes a lo largo de cada cresta.
+    for (const ridge of geo.ridges) {
+      const line = catmull(ridge, 8);
+      for (let i = 1; i < line.length; i++) {
+        const a = line[i - 1];
+        const b = line[i];
+        const len = Math.hypot(b.x - a.x, b.y - a.y);
+        const nx = -(b.y - a.y) / (len || 1);
+        const ny = (b.x - a.x) / (len || 1);
+        for (let d = 0; d < len; d += 9) {
+          for (let row = 0; row < 3; row++) {
+            const off = (rnd() - 0.5) * (row === 0 ? 22 : 60);
+            const t = d / len;
+            const p = { x: a.x + (b.x - a.x) * t + nx * off, y: a.y + (b.y - a.y) * t + ny * off };
+            if (row > 0 && rnd() < 0.5) continue;
+            if (!isLand(p) || busy.near(p, 22) || riverGrid.near(p, 18) || nearSettlement(p, 34)) continue;
+            mountains.push(p);
+          }
+        }
+      }
+    }
+    // Colinas sueltas.
+    for (let i = 0; i < 250; i++) {
+      const p = { x: rnd() * W, y: rnd() * H };
+      if (fbm(p.x / 160, p.y / 160, seed + 500) < 0.66) continue;
+      if (!isLand(p) || busy.near(p, 30) || riverGrid.near(p, 24) || nearSettlement(p, 40)) continue;
+      mountains.push(p);
+    }
+  } else
+    for (let i = 0; i < 700; i++) {
+      const x = rnd() * W;
+      const y = rnd() * H;
+      const edge = Math.min(x, W - x) / W;
+      const n = fbm(x / 180, y / 180, seed + 500);
+      if (n + (0.2 - edge) * 1.6 < 0.72) continue;
+      const p = { x, y };
+      if (busy.near(p, 34) || riverGrid.near(p, 30) || nearSettlement(p, 40)) continue;
+      mountains.push(p);
+    }
   mountains.sort((a, b) => a.y - b.y);
   for (const m of mountains) {
     const s = 14 + rnd() * 16;
@@ -231,7 +346,7 @@ export function bakeTerrain(state: GameState): HTMLCanvasElement {
     c.beginPath();
     c.ellipse(m.x + s * 0.2, m.y + 2, s * 1.05, s * 0.32, 0, 0, Math.PI * 2);
     c.fill();
-    c.fillStyle = '#9d8f6c';
+    c.fillStyle = climate === 'arido' ? '#a8916a' : '#9d8f6c';
     c.beginPath();
     c.moveTo(m.x - s, m.y);
     c.lineTo(m.x - s * 0.1, m.y - h);
@@ -245,7 +360,7 @@ export function bakeTerrain(state: GameState): HTMLCanvasElement {
     c.lineTo(m.x + s * 0.15, m.y);
     c.closePath();
     c.fill();
-    if (h > 22) {
+    if (h > 22 && climate !== 'arido') {
       c.fillStyle = '#efe9da';
       c.beginPath();
       c.moveTo(m.x - s * 0.1, m.y - h);
@@ -257,32 +372,35 @@ export function bakeTerrain(state: GameState): HTMLCanvasElement {
     }
   }
 
-  // 4. Río.
-  if (river.length) {
+  // 4. Ríos.
+  for (const rv of rivers) {
     const stroke = (w: number, col: string) => {
       c.strokeStyle = col;
       c.lineWidth = w;
       c.beginPath();
-      river.forEach((p, i) => (i ? c.lineTo(p.x, p.y) : c.moveTo(p.x, p.y)));
+      rv.forEach((p, i) => (i ? c.lineTo(p.x, p.y) : c.moveTo(p.x, p.y)));
       c.stroke();
     };
     c.lineCap = 'round';
     c.lineJoin = 'round';
-    stroke(24, 'rgba(110,100,60,0.35)');
-    stroke(17, '#4d7a8c');
-    stroke(11, '#5f8fa2');
-    stroke(3, 'rgba(210,235,240,0.35)');
+    const k = geo ? 0.6 : 1;
+    stroke(24 * k, 'rgba(110,100,60,0.35)');
+    stroke(17 * k, '#4d7a8c');
+    stroke(11 * k, '#5f8fa2');
+    stroke(3 * k, 'rgba(210,235,240,0.35)');
   }
 
   // 5. Bosques.
   const trees: Pt[] = [];
-  for (let i = 0; i < 9000; i++) {
+  const nTrees = Math.round((9000 * W * H) / 1.6e6) * (climate === 'arido' ? 0.45 : climate === 'norte' ? 1.25 : 1);
+  for (let i = 0; i < nTrees; i++) {
     const x = rnd() * W;
     const y = rnd() * H;
     const n = fbm(x / 140, y / 140, seed + 77);
     if (n < 0.56) continue;
     const p = { x, y };
-    if (busy.near(p, 13) || riverGrid.near(p, 16) || nearSettlement(p, 50)) continue;
+    if (!isLand(p) || busy.near(p, 13) || riverGrid.near(p, 16) || nearSettlement(p, 50)) continue;
+    if (climate === 'arido' && y / H > 0.7 && rnd() < 0.8) continue;
     if (mountains.some((m) => Math.abs(m.x - x) < 26 && y < m.y + 6 && y > m.y - 34)) continue;
     trees.push(p);
   }
@@ -324,8 +442,8 @@ export function bakeTerrain(state: GameState): HTMLCanvasElement {
   // Puentes donde un camino cruza el río.
   for (const poly of roadPolys)
     for (let i = 1; i < poly.length; i++)
-      for (let k = 1; k < river.length; k++) {
-        const p = segIntersection(poly[i - 1], poly[i], river[k - 1], river[k]);
+      for (const rv of rivers) for (let k = 1; k < rv.length; k++) {
+        const p = segIntersection(poly[i - 1], poly[i], rv[k - 1], rv[k]);
         if (!p) continue;
         const ang = Math.atan2(poly[i].y - poly[i - 1].y, poly[i].x - poly[i - 1].x);
         c.save();
@@ -354,6 +472,22 @@ export function bakeTerrain(state: GameState): HTMLCanvasElement {
     c.beginPath();
     c.arc(s.x, s.y, r + 10, 0, Math.PI * 2);
     c.fill();
+  }
+
+  // 7b. Rótulos de mares y regiones.
+  if (geo) {
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    for (const l of geo.labels) {
+      c.save();
+      c.translate(l.x, l.y);
+      c.rotate((l.rot * Math.PI) / 180);
+      c.font = l.land ? '600 15px Cinzel, serif' : 'italic 600 21px Cinzel, serif';
+      const txt = l.text.split('').join(String.fromCharCode(8202));
+      c.fillStyle = l.land ? 'rgba(70,50,25,0.45)' : 'rgba(215,232,238,0.55)';
+      c.fillText(txt, 0, 0);
+      c.restore();
+    }
   }
 
   // 8. Viñeta de los bordes.
