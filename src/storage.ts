@@ -7,13 +7,16 @@ const SETTINGS_KEY = 'legio-roma:ajustes';
 export interface Settings {
   muted: boolean;
   tipsDone: number;
-  culture: 'roma' | 'galos' | 'cartago';
+  culture: 'roma' | 'galos' | 'cartago' | 'griegos';
   difficulty: 'facil' | 'normal' | 'dificil';
   mapId: string;
   foodTip: boolean;
+  music: boolean;
+  minimap: boolean;
+  tutorialDone: boolean;
 }
 
-const DEFAULTS: Settings = { muted: false, tipsDone: 0, culture: 'roma', difficulty: 'normal', mapId: 'po', foodTip: false };
+const DEFAULTS: Settings = { muted: false, tipsDone: 0, culture: 'roma', difficulty: 'normal', mapId: 'po', foodTip: false, music: true, minimap: true, tutorialDone: false };
 
 function safeGet(key: string): string | null {
   try {
@@ -58,4 +61,26 @@ export function loadSettings(): Settings {
 
 export function saveSettings(s: Settings): void {
   safeSet(SETTINGS_KEY, JSON.stringify(s));
+}
+
+const CAMPAIGN_KEY = 'legio-roma:campana';
+
+export interface CampaignProgress {
+  /** Siguiente capítulo por jugar (0…). */
+  chapter: number;
+  fortLevel: number;
+  generals: { name: string; level: number; xp: number }[];
+  done: boolean;
+}
+
+export function loadCampaigns(): Record<string, CampaignProgress> {
+  try {
+    return JSON.parse(safeGet(CAMPAIGN_KEY) ?? '{}');
+  } catch {
+    return {};
+  }
+}
+
+export function saveCampaigns(c: Record<string, CampaignProgress>): void {
+  safeSet(CAMPAIGN_KEY, JSON.stringify(c));
 }

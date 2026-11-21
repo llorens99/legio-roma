@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { newGame, recruit, sendArmy, redirectArmy, cancelRecruit, newSquad, disband, foodBalance, startUpgrade, appointGeneral, generalsOf, TICK } from '../src/core/game';
 import { orderRetreat } from '../src/core/combat';
+import { CAMPAIGNS, chapterPlayers } from '../src/core/campaign';
+import { isHistoric } from '../src/core/maps';
+import { onLand } from '../src/core/geoutil';
 import { statsOf, recruitable } from '../src/core/units';
 import { step } from '../src/core/sim';
 import { MAPS } from '../src/core/maps';
@@ -18,7 +21,7 @@ describe('mapas', () => {
     it(`${m.name} es válido`, () => {
       expect(validateMap(m)).toEqual([]);
     });
-    it(`${m.name} es justo: cada fortaleza a la misma distancia de su rival más cercano`, () => {
+    if (!m.geo) it(`${m.name} es justo: cada fortaleza a la misma distancia de su rival más cercano`, () => {
       const s = newGame({ seed: 3, mapId: m.id });
       const forts = s.settlements.filter((x) => x.kind === 'fortaleza' && x.owner > 0);
       expect(forts.length).toBe(m.players);
@@ -28,7 +31,7 @@ describe('mapas', () => {
       const counts = forts.map((f) => s.settlements.filter((x) => x.owner === f.owner).length);
       expect(new Set(counts).size).toBe(1);
     });
-    it(`${m.name}: cada jugador tiene color propio`, () => {
+    if (!m.geo) it(`${m.name}: cada jugador tiene color propio`, () => {
       const s = newGame({ seed: 3, mapId: m.id, players: Array.from({ length: m.players }, () => ({ culture: 'galos' as const, ai: 'normal' })) });
       const colors = s.factions.map((f) => f.color);
       expect(new Set(colors).size).toBe(colors.length);
@@ -275,9 +278,35 @@ describe('mejoras, generales y moral', () => {
   });
 });
 
+describe('mapas reales y campaña', () => {
+  it('los mapas históricos tienen costa, ríos y sus plazas en tierra firme', () => {
+    for (const m of Object.values(MAPS).filter((x) => x.geo)) {
+      expect(m.geo!.land.length).toBeGreaterThan(0);
+      for (const n of m.nodes) expect(onLand(m.geo!.land, n)).toBe(true);
+      expect(isHistoric(m.id)).toBe(true);
+    }
+  });
+  for (const c of Object.values(CAMPAIGNS))
+    c.chapters.forEach((ch, i) => {
+      it(`${c.name} ${i + 1}: cada bando tiene su fortaleza y el capítulo arranca`, () => {
+        const s = newGame({ seed: 3, mapId: ch.mapId, players: chapterPlayers(ch, 'normal') });
+        for (let f = 1; f <= ch.sides.length; f++) expect(s.settlements.some((x) => x.owner === f && x.kind === 'fortaleza')).toBe(true);
+        expect(s.factions[1].isPlayer).toBe(true);
+        expect(s.factions[1].culture).toBe(c.culture);
+      });
+    });
+  it('los veteranos de campaña llegan con su nivel y la capital mejorada', () => {
+    const ch = CAMPAIGNS.roma.chapters[1];
+    const s = newGame({ seed: 3, mapId: ch.mapId, players: chapterPlayers(ch, 'normal', { fortLevel: 2, generals: [{ name: 'Escipión', level: 3, xp: 120 }] }) });
+    const cap = s.settlements.find((x) => x.name === 'Messana')!;
+    expect(cap.level).toBe(2);
+    expect(cap.generals[0]).toMatchObject({ name: 'Escipión', level: 3 });
+  });
+});
+
 describe('varios rivales', () => {
   it('una partida de 4 bandos IA termina con un ganador', () => {
-    const s = newGame({ seed: 21, mapId: 'hispania', players: [
+    const s = newGame({ seed: 21, mapId: 'cuatro', players: [
       { culture: 'roma', ai: 'normal' }, { culture: 'galos', ai: 'normal' }, { culture: 'cartago', ai: 'normal' }, { culture: 'galos', ai: 'normal' },
     ] });
     for (let i = 0; i < (60 * 60) / TICK && s.winner === null; i++) step(s);
@@ -310,6 +339,16 @@ describe('IA y determinismo', () => {
   });
 });
 
+describe('historial', () => {
+  it('guarda cada 30 s los hombres de cada bando', () => {
+    const s = peaceful();
+    run(s, 61);
+    expect(s.history!.length).toBe(2);
+    expect(s.history![0].men[1]).toBeGreaterThan(0);
+    expect(s.history![1].t).toBe(60);
+  });
+});
+
 describe('guardado', () => {
   it('guarda y carga sin perder nada', () => {
     const s = peaceful();
@@ -325,10 +364,17 @@ describe('guardado', () => {
     for (const f of raw.factions) { delete f.food; delete f.starving; }
     for (const st of raw.settlements) { delete st.level; delete st.building; delete st.build; delete st.generals; }
     const m = migrate(raw)!;
-    expect(m.version).toBe(3);
+    expect(m.version).toBe(4);
     expect(m.settlements[0].level).toBe(1);
     expect(m.factions[1].food).toBeGreaterThan(0);
     expect(m.factions[1].starving).toBe(false);
+  });
+  it('migra el antiguo mapa «hispania» simétrico a «cuatro»', () => {
+    const s = newGame({ seed: 4, mapId: 'cuatro' });
+    const raw = JSON.parse(serialize(s));
+    raw.version = 3;
+    raw.mapId = 'hispania';
+    expect(migrate(raw)!.mapId).toBe('cuatro');
   });
   it('rechaza basura y versiones futuras', () => {
     expect(deserialize('no json')).toBeNull();

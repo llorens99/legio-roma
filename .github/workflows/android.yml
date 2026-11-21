@@ -1,0 +1,92 @@
+# Compila el APK de Android en cada push y lo prueba en un emulador.
+# El APK queda en la release «apk-<rama>»; las capturas y el logcat del emulador, en el borrador «e2e-<rama>».
+name: Android
+
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    outputs:
+      rama: ${{ steps.rama.outputs.rama }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: rama
+        run: echo "rama=$(echo '${{ github.ref_name }}' | tr '/ ' '--')" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - run: npx cap sync android
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Compilar APK
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon
+      - name: Preparar APK
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk legio.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: legio.apk
+      - name: Publicar en Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RAMA: ${{ steps.rama.outputs.rama }}
+        run: |
+          gh release delete "apk-$RAMA" --yes --cleanup-tag || true
+          gh release create "apk-$RAMA" legio.apk \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "Legio — APK de la rama $RAMA (compilación ${{ github.run_number }})" \
+            --notes "APK de pruebas firmado con la clave fija del repositorio: se instala encima de la versión anterior sin perder la partida. Commit ${GITHUB_SHA::7}."
+
+  emulador:
+    needs: apk
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: apk
+      - name: Activar KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Probar en el emulador
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: default
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          script: bash tools/emulador.sh
+      - name: Subir capturas y logcat
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RAMA: ${{ needs.apk.outputs.rama }}
+        run: |
+          gh release delete "e2e-$RAMA" --yes --cleanup-tag || true
+          ls emulador/ || true
+          gh release create "e2e-$RAMA" emulador/* --draft --target "$GITHUB_SHA" \
+            --title "Prueba en emulador — $RAMA" --notes "$(cat emulador/resumen.txt 2>/dev/null || echo 'sin resumen')"

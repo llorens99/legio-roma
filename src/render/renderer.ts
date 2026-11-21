@@ -1,5 +1,5 @@
 import { armySpeed } from '../core/game';
-import { pointOnRoad } from '../core/maps';
+import { MAPS, pointOnRoad } from '../core/maps';
 import type { Army, Battle, GameState, Pt, Squad } from '../core/types';
 import { maxHp, menOf, statsOf, totalMen, UNITS } from '../core/units';
 import type { Camera } from './camera';
@@ -13,6 +13,8 @@ export interface ViewState {
   selected: Selection;
   targeting: boolean;
   drag: { from: number; to: Pt; hover: number | null } | null;
+  /** Plaza señalada por el tutorial. */
+  highlight?: number | null;
 }
 
 interface Fig {
@@ -57,6 +59,8 @@ export class Renderer {
   corpses: Corpse[] = [];
   prevMen = new Map<number, number>();
   prevPos = new Map<number, Pt[]>();
+  /** Avisos en el borde de la pantalla: batallas y amenazas fuera de la vista. */
+  indicators: { sx: number; sy: number; wx: number; wy: number }[] = [];
   /** Frente de cada ejército dibujado (para tocarlo). */
   armyFront = new Map<number, Pt>();
   lastTime = 0;
@@ -239,7 +243,7 @@ export class Renderer {
     const dpr = this.dpr;
     const z = cam.z;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = '#5b4a33';
+    ctx.fillStyle = MAPS[state.mapId]?.geo ? '#345e79' : '#5b4a33';
     ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
     ctx.setTransform(dpr * z, 0, 0, dpr * z, dpr * (cam.vw / 2 - cam.x * z), dpr * (cam.vh / 2 - cam.y * z));
     ctx.imageSmoothingEnabled = true;
@@ -252,7 +256,7 @@ export class Renderer {
     const ex = Math.min(state.width, x1);
     const ey = Math.min(state.height, y1);
     if (this.terrain && ex > sx && ey > sy) {
-      const S = TERRAIN_SCALE;
+      const S = (this.terrain as any).scale ?? TERRAIN_SCALE;
       ctx.drawImage(this.terrain, sx * S, sy * S, (ex - sx) * S, (ey - sy) * S, sx, sy, ex - sx, ey - sy);
     }
     const visible = (x: number, y: number, m = 60) => x > x0 - m && x < x1 + m && y > y0 - m && y < y1 + m;
@@ -525,6 +529,88 @@ export class Renderer {
       const [px, py] = cam.toScreen(b.x, b.y);
       drawSwords(ctx, px, py - 34 * Math.min(1.2, z), now);
     }
+    // Flecha del tutorial sobre la plaza señalada.
+    if (view.highlight !== null && view.highlight !== undefined) {
+      const s = state.settlements[view.highlight];
+      const [px, py] = cam.toScreen(s.x, s.y);
+      const R = RADIUS[s.kind] * z;
+      const bob = Math.sin(now * 5) * 6;
+      ctx.strokeStyle = `rgba(255,214,120,${0.6 + 0.4 * pulse})`;
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(px, py, R + 18 + pulse * 4, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = '#ffd36e';
+      ctx.strokeStyle = 'rgba(40,20,5,0.8)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      const ty = py - R - 30 + bob;
+      ctx.moveTo(px, ty + 18);
+      ctx.lineTo(px - 14, ty);
+      ctx.lineTo(px - 6, ty);
+      ctx.lineTo(px - 6, ty - 16);
+      ctx.lineTo(px + 6, ty - 16);
+      ctx.lineTo(px + 6, ty);
+      ctx.lineTo(px + 14, ty);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+    // Avisos en el borde: batallas propias y ejércitos enemigos que vienen a por tus plazas.
+    this.indicators = [];
+    const marks: { x: number; y: number; kind: 'battle' | 'threat' }[] = [];
+    for (const b of state.battles) if (b.sides.some((x) => x.faction === view.player)) marks.push({ x: b.x, y: b.y, kind: 'battle' });
+    for (const a of state.armies) {
+      if (a.owner === view.player || a.battleId !== null || a.retreating) continue;
+      const dest = state.settlements[a.path.length ? a.path[a.path.length - 1] : a.toNode];
+      if (dest.owner !== view.player) continue;
+      const fp = this.armyFront.get(a.id);
+      if (fp) marks.push({ x: fp.x, y: fp.y, kind: 'threat' });
+    }
+    const top = 116;
+    const pad = 26;
+    for (const m of marks) {
+      const [px, py] = cam.toScreen(m.x, m.y);
+      if (px > 0 && px < cam.vw && py > 90 && py < cam.vh) continue;
+      const cx = cam.vw / 2;
+      const cy = (cam.vh + top) / 2;
+      const dx = px - cx;
+      const dy = py - cy;
+      const sx = Math.abs(dx) > 1e-3 ? (cam.vw / 2 - pad) / Math.abs(dx) : Infinity;
+      const sy = Math.abs(dy) > 1e-3 ? (dy < 0 ? cy - top : cam.vh - pad - cy) / Math.abs(dy) : Infinity;
+      const k = Math.min(sx, sy);
+      const ix = cx + dx * k;
+      const iy = cy + dy * k;
+      if (this.indicators.some((o) => Math.hypot(o.sx - ix, o.sy - iy) < 30)) continue;
+      this.indicators.push({ sx: ix, sy: iy, wx: m.x, wy: m.y });
+      const ang = Math.atan2(dy, dx);
+      ctx.save();
+      ctx.translate(ix, iy);
+      ctx.rotate(ang);
+      ctx.fillStyle = m.kind === 'battle' ? 'rgba(160,30,15,0.92)' : 'rgba(200,120,20,0.92)';
+      ctx.beginPath();
+      ctx.moveTo(22, 0);
+      ctx.lineTo(10, -9);
+      ctx.lineTo(10, 9);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+      ctx.fillStyle = m.kind === 'battle' ? 'rgba(160,30,15,0.92)' : 'rgba(200,120,20,0.92)';
+      ctx.strokeStyle = '#f6e7c3';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(ix, iy, 13 + pulse * 1.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#fff6e0';
+      ctx.font = '700 13px Cinzel, serif';
+      ctx.fillText(m.kind === 'battle' ? '⚔' : '!', ix, iy + 1);
+    }
+  }
+
+  hitIndicator(sx: number, sy: number): { wx: number; wy: number } | null {
+    for (const i of this.indicators) if (Math.hypot(i.sx - sx, i.sy - sy) < 26) return i;
+    return null;
   }
 
   private trackLosses(state: GameState, figs: Fig[], now: number): void {

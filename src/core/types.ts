@@ -1,6 +1,6 @@
 // Tipos del núcleo. Todo es serializable a JSON (sin clases ni funciones).
 
-export type Culture = 'roma' | 'galos' | 'cartago' | 'independientes';
+export type Culture = 'roma' | 'galos' | 'cartago' | 'griegos' | 'independientes';
 export type UnitRole = 'basica' | 'tiradores' | 'pesada' | 'caballeria';
 export type SettlementKind = 'fortaleza' | 'aldea' | 'fortin';
 export type Difficulty = 'facil' | 'normal' | 'dificil';
@@ -202,5 +202,11 @@ export interface GameState {
   factions: Faction[];
   nextId: number;
   winner: number | null;
+  /** Muestras cada 30 s: hombres por bando (índice = id de bando). */
+  history?: { t: number; men: number[] }[];
+  /** Paso del tutorial (si es la partida del tutorial). */
+  tutorial?: number | null;
+  /** Partida de campaña: pueblo y capítulo. */
+  campaign?: { culture: string; chapter: number } | null;
   events: GameEvent[];
 }
