@@ -84,7 +84,8 @@ cap 02-nueva
 tocar "A la guerra" && ok "empezar partida" || mal "empezar partida"
 sleep 8
 cap 03-partida
-hay "EN PAUSA\|Ariminum\|Toca tu fortaleza\|Paso" && ok "partida en marcha" || mal "partida en marcha"
+# El lienzo se anima sin parar y uiautomator no siempre lo lee: la app lo anuncia por la consola.
+adb logcat -d | grep -q "\[legio\] partida en marcha" && ok "partida en marcha" || mal "partida en marcha"
 
 # Girar a horizontal y volver.
 adb shell settings put system accelerometer_rotation 0

@@ -308,6 +308,8 @@ export class App {
   begin(): void {
     $('toasts').innerHTML = '';
     const s = this.state!;
+    // Marca para la prueba del emulador (uiautomator no lee el lienzo animado).
+    console.info(`[legio] partida en marcha: ${s.mapId}`);
     this.demo = null;
     this.view = { player: s.factions.find((f) => f.isPlayer)?.id ?? 1, selected: null, targeting: false, drag: null };
     this.cam.mapW = s.width;
