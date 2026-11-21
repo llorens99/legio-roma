@@ -7,7 +7,7 @@ const SETTINGS_KEY = 'legio-roma:ajustes';
 export interface Settings {
   muted: boolean;
   tipsDone: number;
-  culture: 'roma' | 'galos' | 'cartago';
+  culture: 'roma' | 'galos' | 'cartago' | 'griegos';
   difficulty: 'facil' | 'normal' | 'dificil';
   mapId: string;
   foodTip: boolean;

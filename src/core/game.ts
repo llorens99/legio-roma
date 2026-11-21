@@ -10,7 +10,7 @@ export const START_FOOD = 120;
 export const FOOD_CAP = 400;
 
 export type PlayableCulture = Exclude<Culture, 'independientes'>;
-export const CULTURES: PlayableCulture[] = ['roma', 'galos', 'cartago'];
+export const CULTURES: PlayableCulture[] = ['roma', 'galos', 'cartago', 'griegos'];
 
 export interface PlayerSetup {
   culture: PlayableCulture;
@@ -40,10 +40,11 @@ const LOOKS: Record<Culture, { name: string; color: string }[]> = {
   roma: [{ name: 'Roma', color: '#b3261e' }, { name: 'Liga Latina', color: '#c9741a' }, { name: 'Campania', color: '#2b5a9b' }, { name: 'Etruria', color: '#8b4a2b' }],
   galos: [{ name: 'Galos', color: '#2f7d3a' }, { name: 'Helvecios', color: '#1f6f8b' }, { name: 'Belgas', color: '#7a8a1f' }, { name: 'Arvernos', color: '#a0522d' }],
   cartago: [{ name: 'Cartago', color: '#6b3fa0' }, { name: 'Numidia', color: '#b0892a' }, { name: 'Mauretania', color: '#2a7f78' }, { name: 'Gétulos', color: '#9b3b6b' }],
+  griegos: [{ name: 'Macedonia', color: '#2a4d9b' }, { name: 'Atenas', color: '#3b8fc0' }, { name: 'Seléucidas', color: '#8a6d1d' }, { name: 'Esparta', color: '#7a1f2b' }],
   independientes: [{ name: 'Independientes', color: '#8a8070' }],
 };
 
-export const CULTURE_NAMES: Record<Culture, string> = { roma: 'Roma', galos: 'Galos', cartago: 'Cartago', independientes: 'Independientes' };
+export const CULTURE_NAMES: Record<Culture, string> = { roma: 'Roma', galos: 'Galos', cartago: 'Cartago', griegos: 'Griegos', independientes: 'Independientes' };
 
 export function newSquad(state: GameState, unit: string): Squad {
   return { id: state.nextId++, unit, hp: maxHp(unit) };
@@ -193,6 +194,7 @@ const GENERAL_NAMES: Record<Culture, string[]> = {
   roma: ['Escipión', 'Marcelo', 'Fabio', 'Emilio Paulo', 'Claudio Nerón', 'Flaminino', 'Catón', 'Mario'],
   galos: ['Breno', 'Vercingétorix', 'Ambiórix', 'Dumnórix', 'Comio', 'Indutiomaro', 'Lucterio', 'Correo'],
   cartago: ['Aníbal', 'Asdrúbal', 'Magón', 'Amílcar', 'Hannón', 'Maharbal', 'Himilcón', 'Bomílcar'],
+  griegos: ['Filipo', 'Alejandro', 'Antígono', 'Ptolomeo', 'Seleuco', 'Pirro', 'Demetrio', 'Perseo'],
   independientes: ['Caudillo'],
 };
 

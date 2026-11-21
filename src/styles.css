@@ -358,6 +358,8 @@ h1, h2, h3, .cinzel { font-family: 'Cinzel', Georgia, serif; letter-spacing: 0.0
 
 .opt.grid { display: grid; grid-template-columns: repeat(3, 1fr); }
 .opt.grid button { min-height: 56px; }
+.opt.c4 { gap: 6px; }
+.opt.c4 button { font-size: 14px; min-width: 0; }
 .campcard { margin: 8px 0; text-align: left; }
 .campbtn {
   width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 2px;

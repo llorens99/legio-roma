@@ -50,10 +50,10 @@ interface FigSpec {
   tunic: string;
   legs: string;
   body: 'tunic' | 'mail' | 'segmentata' | 'bare';
-  helmet: 'roman' | 'crest' | 'gallic' | 'hood' | 'none';
-  shield: 'scutum' | 'oval' | 'round' | 'none';
+  helmet: 'roman' | 'crest' | 'gallic' | 'hood' | 'corinto' | 'none';
+  shield: 'scutum' | 'oval' | 'round' | 'hoplon' | 'pelta' | 'none';
   shieldColor: string;
-  weapon: 'spear' | 'sword' | 'bow' | 'javelin' | 'sling';
+  weapon: 'spear' | 'sword' | 'bow' | 'javelin' | 'sling' | 'pike';
   big?: boolean;
   /** Montado: color del caballo. */
   horse?: string;
@@ -103,6 +103,18 @@ function specFor(unit: string, color: string): FigSpec {
       return { tunic: color, legs: '#5d6b8a', body: 'mail', helmet: 'gallic', shield: 'oval', shieldColor: '#d9b24a', weapon: 'sword', horse: '#3a2a1e', cape: '#d9b24a' };
     case 'general_cartago':
       return { tunic: '#f4eedf', legs: SKIN, body: 'tunic', helmet: 'crest', shield: 'round', shieldColor: '#d9b24a', weapon: 'spear', horse: '#7a5230', cape: color };
+    case 'griegos_hoplitas':
+      return { tunic: '#efe6cf', legs: SKIN, body: 'tunic', helmet: 'corinto', shield: 'hoplon', shieldColor: color, weapon: 'spear' };
+    case 'griegos_peltastas':
+      return { tunic: color, legs: SKIN, body: 'tunic', helmet: 'none', shield: 'pelta', shieldColor: '#b98a3e', weapon: 'javelin' };
+    case 'griegos_falangitas':
+      return { tunic: color, legs: SKIN, body: 'segmentata', helmet: 'corinto', shield: 'round', shieldColor: color, weapon: 'pike', big: true };
+    case 'griegos_hetairoi':
+      return { tunic: color, legs: SKIN, body: 'mail', helmet: 'roman', shield: 'none', shieldColor: color, weapon: 'spear', horse: '#e9e2d4' };
+    case 'griegos_argiraspides':
+      return { tunic: '#efe6cf', legs: SKIN, body: 'segmentata', helmet: 'corinto', shield: 'hoplon', shieldColor: '#d6dbe0', weapon: 'pike', big: true };
+    case 'general_griegos':
+      return { tunic: '#efe6cf', legs: SKIN, body: 'segmentata', helmet: 'crest', shield: 'none', shieldColor: color, weapon: 'sword', horse: '#1e1a18', cape: color };
     case 'ind_honderos':
       return { tunic: '#9b8b6a', legs: SKIN, body: 'tunic', helmet: 'none', shield: 'none', shieldColor: color, weapon: 'sling' };
     default:
@@ -273,6 +285,23 @@ function drawFigure(c: CanvasRenderingContext2D, f: FigSpec): void {
     c.lineWidth = 0.35;
     c.strokeStyle = OUT;
   }
+  if (f.weapon === 'pike') {
+    c.strokeStyle = '#5a4128';
+    c.lineWidth = 0.55;
+    c.beginPath();
+    c.moveTo(-1.5, 0.5);
+    c.lineTo(6.5, -15);
+    c.stroke();
+    c.fillStyle = '#c9ccd0';
+    c.beginPath();
+    c.moveTo(7.2, -16.4);
+    c.lineTo(7.0, -14.4);
+    c.lineTo(5.9, -15.0);
+    c.closePath();
+    c.fill();
+    c.lineWidth = 0.35;
+    c.strokeStyle = OUT;
+  }
   if (f.weapon === 'javelin') {
     c.strokeStyle = '#6a4d30';
     c.lineWidth = 0.45;
@@ -382,6 +411,26 @@ function drawFigure(c: CanvasRenderingContext2D, f: FigSpec): void {
       c.arc(0, -10.5, 0.45, 0, Math.PI * 2);
       c.fill();
       break;
+    case 'corinto':
+      c.fillStyle = '#c0924a';
+      c.beginPath();
+      c.arc(0, -8.7, 1.6, Math.PI * 0.9, Math.PI * 2.1);
+      c.lineTo(1.5, -7.6);
+      c.lineTo(-1.5, -7.6);
+      c.closePath();
+      c.fill();
+      c.stroke();
+      c.fillStyle = '#2a1d10';
+      c.fillRect(-0.2, -8.8, 1.3, 0.5);
+      c.fillStyle = '#7a1f1a';
+      c.beginPath();
+      c.moveTo(-1.8, -10.4);
+      c.quadraticCurveTo(0, -12.2, 1.8, -10.4);
+      c.lineTo(1.2, -10.1);
+      c.quadraticCurveTo(0, -11.4, -1.2, -10.1);
+      c.closePath();
+      c.fill();
+      break;
     case 'hood':
       c.fillStyle = '#7a5a36';
       c.beginPath();
@@ -454,6 +503,34 @@ function drawFigure(c: CanvasRenderingContext2D, f: FigSpec): void {
       c.beginPath();
       c.arc(-2, -4.8, 0.55, 0, Math.PI * 2);
       c.fill();
+      break;
+    case 'hoplon': {
+      const g = c.createRadialGradient(-2.4, -5.6, 0.3, -2, -5.2, 2.6);
+      g.addColorStop(0, '#f0d28a');
+      g.addColorStop(1, '#a8782e');
+      c.fillStyle = f.shieldColor === '#d6dbe0' ? '#d6dbe0' : g;
+      c.beginPath();
+      c.arc(-2, -5.2, 2.5, 0, Math.PI * 2);
+      c.fill();
+      c.stroke();
+      c.fillStyle = f.shieldColor;
+      c.beginPath();
+      c.arc(-2, -5.2, 1.4, 0, Math.PI * 2);
+      c.fill();
+      c.strokeStyle = 'rgba(255,240,200,0.7)';
+      c.lineWidth = 0.25;
+      c.beginPath();
+      c.arc(-2, -5.2, 2.1, 0, Math.PI * 2);
+      c.stroke();
+      break;
+    }
+    case 'pelta':
+      c.beginPath();
+      c.arc(-2, -5.4, 1.9, Math.PI * 0.15, Math.PI * 0.85, true);
+      c.quadraticCurveTo(-2, -6.4, -0.3, -4.5);
+      c.closePath();
+      c.fill();
+      c.stroke();
       break;
     case 'round':
       c.beginPath();
@@ -742,6 +819,7 @@ function squareTowers(c: CanvasRenderingContext2D, r: number, n: number, col: st
 }
 
 export function settlementSprite(kind: SettlementKind, style: Culture): Sprite {
+  if (style === 'griegos') style = 'roma';
   const key = `${kind}|${style}`;
   let s = setCache.get(key);
   if (s) return s;

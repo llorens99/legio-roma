@@ -6,7 +6,7 @@ import { feature } from 'topojson-client';
 type P = [number, number];
 
 /** Recuadros [lonMin, latMin, lonMax, latMax] de cada mapa (con margen). */
-const TOL: Record<string, number> = { italia: 0.012, sicilia: 0.005, hispania: 0.012, galia: 0.012, africa: 0.007 };
+const TOL: Record<string, number> = { italia: 0.012, sicilia: 0.005, hispania: 0.012, galia: 0.012, africa: 0.007, grecia: 0.008, britannia: 0.01, aegyptus: 0.01 };
 
 export const BOXES: Record<string, [number, number, number, number]> = {
   italia: [6.0, 37.4, 19.4, 47.0],
@@ -14,6 +14,9 @@ export const BOXES: Record<string, [number, number, number, number]> = {
   hispania: [-10.0, 35.5, 4.0, 44.2],
   galia: [-5.2, 42.0, 9.0, 51.4],
   africa: [5.2, 33.4, 11.8, 37.7],
+  grecia: [19.0, 36.2, 27.2, 42.0],
+  britannia: [-6.4, 49.8, 2.2, 56.0],
+  aegyptus: [28.6, 29.2, 36.9, 33.9],
 };
 
 const topo = JSON.parse(readFileSync('node_modules/world-atlas/land-10m.json', 'utf8'));

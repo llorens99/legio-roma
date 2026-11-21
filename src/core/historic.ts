@@ -357,4 +357,152 @@ const africa: HistoricDef = {
   ],
 };
 
-export const HISTORIC: HistoricDef[] = [italia, sicilia, hispania, galia, africa];
+// ---------------------------------------------------------------- Grecia y Macedonia
+
+const grecia: HistoricDef = {
+  id: 'grecia',
+  name: 'Grecia',
+  desc: 'Macedonia, las polis griegas y el Epiro',
+  frame: { box: [19.0, 36.2, 27.2, 42.0], scale: 240 },
+  climate: 'med',
+  style: (lat, lon) => (lon < 20.2 && lat > 40.5 ? 'roma' : 'griegos'),
+  cities: [
+    F('Pella', 40.76, 22.52), A('Amphipolis', 40.82, 23.85), A('Abdera', 40.94, 24.98), T('Heraclea Lyncestis', 41.01, 21.33),
+    T('Stobi', 41.55, 21.97), F('Dyrrachium', 41.32, 19.45), A('Apollonia', 40.72, 19.47), A('Lissus', 41.78, 19.64),
+    T('Dium', 40.17, 22.49), A('Larisa', 39.64, 22.42), T('Demetrias', 39.36, 22.94), F('Ambracia', 39.16, 20.98),
+    T('Thermopylae', 38.8, 22.54), F('Thebae', 38.32, 23.32), F('Athenae', 37.98, 23.73), A('Corinthus', 37.91, 22.88),
+    A('Patrae', 38.25, 21.73), A('Olympia', 37.64, 21.63), T('Mantinea', 37.62, 22.39), F('Sparta', 37.08, 22.43),
+    A('Pylos', 36.91, 21.7),
+  ],
+  roads: [
+    ['Dyrrachium', 'Apollonia'], ['Dyrrachium', 'Lissus'], ['Dyrrachium', 'Heraclea Lyncestis'], ['Heraclea Lyncestis', 'Pella'],
+    ['Heraclea Lyncestis', 'Stobi'], ['Stobi', 'Pella'], ['Stobi', 'Amphipolis'], ['Pella', 'Amphipolis'], ['Amphipolis', 'Abdera'],
+    ['Pella', 'Dium'], ['Dium', 'Larisa'], ['Larisa', 'Demetrias'], ['Larisa', 'Ambracia'], ['Apollonia', 'Ambracia'],
+    ['Demetrias', 'Thermopylae'], ['Larisa', 'Thermopylae'], ['Thermopylae', 'Thebae'], ['Thebae', 'Athenae'], ['Thebae', 'Corinthus'],
+    ['Athenae', 'Corinthus'], ['Ambracia', 'Patrae'], ['Corinthus', 'Patrae'], ['Patrae', 'Olympia'], ['Olympia', 'Pylos'],
+    ['Pylos', 'Sparta'], ['Sparta', 'Mantinea'], ['Mantinea', 'Corinthus'], ['Mantinea', 'Olympia'],
+  ],
+  rivers: [
+    [[21.0, 40.4], [21.8, 40.3], [22.4, 40.45], [22.6, 40.5]],
+    [[21.9, 41.6], [22.3, 41.1], [22.6, 40.6]],
+    [[21.4, 39.7], [22.0, 39.55], [22.42, 39.64], [22.7, 39.88]],
+    [[21.3, 39.6], [21.3, 39.0], [21.2, 38.4]],
+    [[23.3, 41.6], [23.5, 41.2], [23.85, 40.8]],
+  ],
+  ridges: [
+    [[20.6, 40.6], [21.0, 40.0], [21.4, 39.4], [21.7, 38.9], [22.1, 38.6]],
+    [[22.2, 40.12], [22.38, 40.02]],
+    [[22.35, 37.3], [22.35, 36.8]],
+    [[23.8, 41.6], [24.8, 41.5], [25.6, 41.4]],
+    [[22.4, 38.6], [22.65, 38.5]],
+    [[21.9, 37.9], [22.3, 37.72]],
+  ],
+  labels: [
+    ['MARE AEGAEUM', 25.0, 38.6, 0, false], ['MARE IONIUM', 19.9, 37.6, 0, false], ['MACEDONIA', 22.6, 41.15, 0, true],
+    ['EPIRUS', 20.55, 39.75, 0, true], ['PELOPONNESUS', 22.1, 37.35, 0, true], ['THRACIA', 24.8, 41.75, 0, true], ['ILLYRICUM', 20.3, 41.8, 0, true],
+  ],
+  slots: [
+    { fortress: 'Pella', owns: ['Amphipolis', 'Dium'] },
+    { fortress: 'Athenae', owns: ['Corinthus'] },
+    { fortress: 'Sparta', owns: ['Pylos', 'Mantinea'] },
+    { fortress: 'Dyrrachium', owns: ['Apollonia', 'Lissus'] },
+  ],
+};
+
+// ---------------------------------------------------------------- Britania
+
+const britannia: HistoricDef = {
+  id: 'britannia',
+  name: 'Britania',
+  desc: 'La isla de los britanos al borde del mundo',
+  frame: { box: [-6.4, 49.8, 2.2, 56.0], scale: 240 },
+  climate: 'norte',
+  style: () => 'galos',
+  cities: [
+    F('Durovernum', 51.28, 1.08), A('Londinium', 51.51, -0.13), F('Camulodunum', 51.89, 0.9), A('Noviomagus', 50.84, -0.78),
+    A('Calleva', 51.36, -1.09), T('Sorviodunum', 51.09, -1.8), T('Mai Dun', 50.69, -2.47), A('Isca Dumnoniorum', 50.72, -3.53),
+    A('Glevum', 51.86, -2.24), F('Isca Silurum', 51.61, -2.96), A('Moridunum', 51.86, -4.31), A('Viroconium', 52.63, -2.6),
+    T('Deva', 53.19, -2.89), A('Segontium', 53.14, -4.27), A('Ratae', 52.63, -1.13), A('Lindum', 53.23, -0.54),
+    F('Venta Icenorum', 52.58, 1.29), F('Eboracum', 53.96, -1.08), A('Mamucium', 53.48, -2.24), T('Cataractonium', 54.37, -1.63),
+    A('Luguvalium', 54.89, -2.93), T('Coria', 54.97, -2.02), A('Trimontium', 55.59, -2.69),
+  ],
+  roads: [
+    ['Durovernum', 'Londinium'], ['Londinium', 'Camulodunum'], ['Londinium', 'Noviomagus'], ['Londinium', 'Calleva'], ['Londinium', 'Ratae'],
+    ['Camulodunum', 'Venta Icenorum'], ['Venta Icenorum', 'Ratae'], ['Noviomagus', 'Sorviodunum'], ['Calleva', 'Sorviodunum'],
+    ['Sorviodunum', 'Mai Dun'], ['Mai Dun', 'Isca Dumnoniorum'], ['Calleva', 'Glevum'], ['Glevum', 'Isca Silurum'], ['Isca Silurum', 'Moridunum'],
+    ['Glevum', 'Viroconium'], ['Ratae', 'Viroconium'], ['Ratae', 'Lindum'], ['Viroconium', 'Deva'], ['Deva', 'Segontium'], ['Deva', 'Mamucium'],
+    ['Mamucium', 'Eboracum'], ['Lindum', 'Eboracum'], ['Eboracum', 'Cataractonium'], ['Cataractonium', 'Coria'], ['Cataractonium', 'Luguvalium'],
+    ['Luguvalium', 'Coria'], ['Coria', 'Trimontium'], ['Luguvalium', 'Trimontium'], ['Moridunum', 'Segontium'],
+  ],
+  rivers: [
+    [[-1.9, 51.7], [-1.25, 51.75], [-0.9, 51.55], [-0.4, 51.45], [0.1, 51.5], [0.6, 51.5]],
+    [[-3.6, 52.5], [-2.75, 52.7], [-2.25, 52.2], [-2.25, 51.86], [-2.6, 51.6]],
+    [[-2.1, 53.0], [-1.5, 52.8], [-0.8, 53.1], [-0.7, 53.6]],
+    [[-2.6, 54.98], [-1.6, 54.97]],
+  ],
+  ridges: [
+    [[-2.2, 53.2], [-2.15, 53.8], [-2.3, 54.4], [-2.45, 54.8]],
+    [[-3.9, 53.0], [-3.7, 52.4], [-3.6, 51.95]],
+    [[-3.25, 54.55], [-3.0, 54.45]],
+    [[-3.4, 55.35], [-2.4, 55.4]],
+    [[-4.0, 50.62], [-3.85, 50.56]],
+  ],
+  labels: [
+    ['OCEANUS GERMANICUS', 1.0, 54.2, -70, false], ['MARE HIBERNICUM', -5.25, 53.6, -80, false], ['FRETUM GALLICUM', 0.0, 50.2, -8, false],
+    ['BRITANNIA', -1.6, 52.2, 0, true], ['CALEDONIA', -3.7, 55.75, 0, true], ['CAMBRIA', -3.85, 52.25, -70, true],
+  ],
+  slots: [
+    { fortress: 'Durovernum', owns: ['Noviomagus'] },
+    { fortress: 'Camulodunum', owns: ['Londinium'] },
+    { fortress: 'Eboracum', owns: ['Lindum', 'Cataractonium'] },
+    { fortress: 'Isca Silurum', owns: ['Moridunum', 'Glevum'] },
+  ],
+};
+
+// ---------------------------------------------------------------- Egipto y Levante
+
+const aegyptus: HistoricDef = {
+  id: 'aegyptus',
+  name: 'Egipto',
+  desc: 'El Nilo, Judea y Siria',
+  frame: { box: [28.6, 29.2, 36.9, 33.9], scale: 230 },
+  climate: 'arido',
+  style: () => 'cartago',
+  cities: [
+    F('Alexandria', 31.2, 29.92), A('Naucratis', 30.9, 30.59), F('Memphis', 29.85, 31.25), A('Bubastis', 30.57, 31.51),
+    A('Tanis', 30.98, 31.88), A('Sebennytos', 30.97, 31.25), T('Pelusium', 31.04, 32.55), T('Rhinocolura', 31.13, 33.83),
+    F('Gaza', 31.5, 34.47), A('Ioppe', 32.05, 34.75), F('Hierosolyma', 31.78, 35.23),
+    F('Tyrus', 33.27, 35.2), F('Damascus', 33.51, 36.29), T('Gadara', 32.65, 35.68), F('Petra', 30.33, 35.44),
+    A('Philadelphia', 31.95, 35.93), A('Bostra', 32.52, 36.48), T('Clysma', 29.97, 32.55), A('Aila', 29.55, 35.0),
+  ],
+  roads: [
+    ['Alexandria', 'Naucratis'], ['Naucratis', 'Memphis'], ['Naucratis', 'Sebennytos'], ['Sebennytos', 'Bubastis'], ['Sebennytos', 'Tanis'],
+    ['Bubastis', 'Memphis'], ['Bubastis', 'Tanis'], ['Tanis', 'Pelusium'], ['Memphis', 'Clysma'], ['Clysma', 'Pelusium'],
+    ['Pelusium', 'Rhinocolura'], ['Rhinocolura', 'Gaza'], ['Gaza', 'Ioppe'], ['Gaza', 'Hierosolyma'], ['Ioppe', 'Hierosolyma'],
+    ['Ioppe', 'Tyrus'], ['Hierosolyma', 'Gadara'], ['Gadara', 'Tyrus'], ['Tyrus', 'Damascus'], ['Gadara', 'Damascus'],
+    ['Gadara', 'Bostra'], ['Bostra', 'Damascus'], ['Hierosolyma', 'Philadelphia'], ['Philadelphia', 'Bostra'], ['Philadelphia', 'Petra'],
+    ['Petra', 'Aila'], ['Aila', 'Clysma'], ['Gaza', 'Petra'],
+  ],
+  rivers: [
+    [[31.25, 29.25], [31.25, 29.85], [31.2, 30.15], [30.85, 30.6], [30.5, 31.05], [30.4, 31.42]],
+    [[31.2, 30.15], [31.25, 30.6], [31.6, 31.0], [31.8, 31.42]],
+    [[35.6, 33.2], [35.6, 32.7], [35.55, 32.2], [35.55, 31.8]],
+  ],
+  ridges: [
+    [[33.8, 29.75], [34.2, 29.45]],
+    [[35.6, 33.85], [35.95, 33.6]],
+    [[35.12, 31.45], [35.25, 32.0]],
+    [[35.5, 30.15], [35.6, 30.9]],
+  ],
+  labels: [
+    ['MARE INTERNUM', 31.8, 32.7, 0, false], ['AEGYPTUS', 30.1, 30.3, 0, true], ['ARABIA', 36.1, 30.3, 0, true],
+    ['SINAI', 33.7, 30.1, 0, true], ['IUDAEA', 34.85, 31.2, -70, true], ['SYRIA', 36.45, 33.1, 0, true],
+  ],
+  slots: [
+    { fortress: 'Alexandria', owns: ['Naucratis', 'Sebennytos'] },
+    { fortress: 'Damascus', owns: ['Gadara', 'Bostra'] },
+    { fortress: 'Petra', owns: ['Aila', 'Philadelphia'] },
+  ],
+};
+
+export const HISTORIC: HistoricDef[] = [italia, sicilia, hispania, galia, africa, grecia, britannia, aegyptus];

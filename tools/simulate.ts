@@ -80,6 +80,12 @@ function scenario(name: string, mapId: string, setups: { label: string; p: Playe
 
 const P = (culture: PlayableCulture, ai: string): PlayerSetup => ({ culture, ai });
 
+if (MODE === 'griegos') {
+  // Modo rápido para afinar el cuarto pueblo: solo sus duelos en el Po.
+  for (const c of ['roma', 'galos', 'cartago'] as const)
+    scenario(`Po: ${c} vs griegos`, 'po', [{ label: c, p: P(c, 'normal') }, { label: 'griegos', p: P('griegos', 'normal') }]);
+  process.exit(0);
+}
 if (MODE === 'campana') {
   campaignSim();
   process.exit(process.exitCode ?? 0);
@@ -90,6 +96,9 @@ const res = {
   rg: scenario('Po: Roma vs Galos', 'po', [{ label: 'Roma', p: P('roma', 'normal') }, { label: 'Galos', p: P('galos', 'normal') }]),
   rc: scenario('Po: Roma vs Cartago', 'po', [{ label: 'Roma', p: P('roma', 'normal') }, { label: 'Cartago', p: P('cartago', 'normal') }]),
   gc: scenario('Po: Galos vs Cartago', 'po', [{ label: 'Galos', p: P('galos', 'normal') }, { label: 'Cartago', p: P('cartago', 'normal') }]),
+  rx: scenario('Po: Roma vs Griegos', 'po', [{ label: 'Roma', p: P('roma', 'normal') }, { label: 'Griegos', p: P('griegos', 'normal') }]),
+  gx: scenario('Po: Galos vs Griegos', 'po', [{ label: 'Galos', p: P('galos', 'normal') }, { label: 'Griegos', p: P('griegos', 'normal') }]),
+  cx: scenario('Po: Cartago vs Griegos', 'po', [{ label: 'Cartago', p: P('cartago', 'normal') }, { label: 'Griegos', p: P('griegos', 'normal') }]),
   tri: scenario('Trinacria: 3 pueblos', 'trinacria', [
     { label: 'Roma', p: P('roma', 'normal') },
     { label: 'Galos', p: P('galos', 'normal') },
@@ -117,16 +126,16 @@ console.log(JSON.stringify(res));
 const within = (x: number, a: number, b: number) => x >= a && x <= b;
 const all = Object.values(res);
 const checks: [string, boolean][] = [
-  ['Duelos de pueblos (Po) entre 40 % y 60 %', [res.rg, res.rc, res.gc].every((r) => Object.values(r.wins).every((w) => within(w, 0.4, 0.6)))],
+  ['Duelos de pueblos (Po) entre 40 % y 60 %', [res.rg, res.rc, res.gc, res.rx, res.gx, res.cx].every((r) => Object.values(r.wins).every((w) => within(w, 0.4, 0.6)))],
   ['Trinacria: ningún pueblo por encima del 45 % ni por debajo del 20 %', Object.values(res.tri.wins).every((w) => within(w, 0.2, 0.45))],
   ['Cuatro reinos: ningún bando por encima del 40 %', Object.values(res.his.wins).every((w) => w <= 0.4)],
-  ['Duración mediana en Po entre 8 y 25 min', [res.rg, res.rc, res.gc, res.jn].every((r) => within(r.median, 8, 25))],
+  ['Duración mediana en Po entre 8 y 25 min', [res.rg, res.rc, res.gc, res.rx, res.gx, res.cx, res.jn].every((r) => within(r.median, 8, 25))],
   ['Duración mediana en Trinacria e Hispania ≤ 40 min', [res.tri, res.his].every((r) => r.median <= 40)],
   ['Partidas sin final < 10 %', all.every((r) => r.draws < 0.1)],
   ['Jugador vence a Fácil ≥ 75 %', res.jf.wins.Jugador >= 0.75],
   ['Jugador vs Normal entre 35 % y 65 %', within(res.jn.wins.Jugador, 0.35, 0.65)],
   ['Difícil gana más que Normal (Jugador ≤ 42 % y menos que contra Normal)', res.jd.wins.Jugador <= 0.42 && res.jd.wins.Jugador < res.jn.wins.Jugador],
-  ['La IA normal casi nunca pasa hambre (< 10 % del tiempo)', [res.rg, res.rc, res.gc, res.tri].every((r) => r.starved < 0.1)],
+  ['La IA normal casi nunca pasa hambre (< 10 % del tiempo)', [res.rg, res.rc, res.gc, res.rx, res.gx, res.cx, res.tri].every((r) => r.starved < 0.1)],
 ];
 for (const [n, ok] of checks) console.log(`${ok ? '✔' : '✘'} ${n}`);
 if (checks.some(([, ok]) => !ok)) process.exitCode = 1;
@@ -135,7 +144,8 @@ if (checks.some(([, ok]) => !ok)) process.exitCode = 1;
 function campaignSim(): void {
   console.log(`Campaña: ${N} partidas por capítulo (jugador = IA normal, rivales normal)`);
   const checks: [string, boolean][] = [];
-  for (const camp of Object.values(CAMPAIGNS)) {
+  const only = process.argv[4];
+  for (const camp of Object.values(CAMPAIGNS).filter((c) => !only || only.split(',').includes(c.id))) {
     camp.chapters.forEach((ch, i) => {
       let wins = 0;
       let draws = 0;

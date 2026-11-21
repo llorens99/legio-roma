@@ -10,13 +10,13 @@ Todo en español: textos del juego, comentarios, commits, PR y documentación.
 1. `npx tsc` sin errores.
 2. `npm test` (Vitest): reglas, validación automática de cada mapa, partidas IA contra IA, determinismo y guardado.
 3. Si tocas reglas, unidades, mapas o IA: `npm run sim -- 200` (≈4 min, en segundo plano) y que se cumplan todos los objetivos (✔):
-   - Duelos de pueblos en el Po (Roma/Galos/Cartago, IA normal) entre 40 % y 60 %.
+   - Duelos de pueblos en el Po (los seis cruces de Roma/Galos/Cartago/Griegos, IA normal) entre 40 % y 60 %. Para afinar solo a los griegos: `npm run sim -- 160 griegos`.
    - Trinacria (3 pueblos): ninguno por encima del 45 % ni por debajo del 20 %. Hispania (4 bandos): ninguno por encima del 40 %.
    - Duración mediana en el Po entre 8 y 25 min; en Trinacria e Hispania ≤ 40 min.
    - Partidas sin final < 10 %. La IA normal pasa hambre < 10 % del tiempo.
    - Sustituto del jugador (`jugador`, en espejo Roma contra Roma): gana a Fácil ≥ 75 %, a Normal entre 35 % y 65 %, y a Difícil ≤ 42 % (y menos que a Normal).
    - Para probar variantes de la IA, compara en espejo con muchas partidas (≥ 80): con 30–40 el ruido es de ±8 puntos.
-   - Si tocas la campaña o los mapas históricos: `npm run sim -- 40 campana`; en cada capítulo el sustituto del jugador (contra IA normal) gana entre el 25 % y el 90 %, mediana ≤ 45 min, sin final < 15 %. El reparto de plazas de cada capítulo (`campaign.ts`) es la palanca principal: una fortaleza enemiga más o menos cambia el resultado de 0 % a 100 %.
+   - Si tocas la campaña o los mapas históricos: `npm run sim -- 40 campana`; en cada capítulo el sustituto del jugador (contra IA normal) gana entre el 25 % y el 90 %, mediana ≤ 45 min, sin final < 15 %. El reparto de plazas de cada capítulo (`campaign.ts`) es la palanca principal: una fortaleza enemiga más o menos cambia el resultado de 0 % a 100 %. Para una o varias campañas: `npm run sim -- 40 campana griegos,roma2`. Para comparar variantes de un capítulo: `tools/probar-capitulo.ts` (capítulos en JSON en la variable `VARIANTES`).
 4. `npm run build` y `python3 tools/e2e.py`: móvil vertical y horizontal con toques reales, errores de consola y capturas en `tools/out/`. **Mira las capturas.**
 5. Con 2 núcleos, no lances simulaciones mientras corre el e2e. Procesos largos en segundo plano escribiendo a un log.
 - Edita archivos grandes con scripts que escriban primero en /tmp y comprueben cada sustitución.
@@ -39,12 +39,12 @@ Todo en español: textos del juego, comentarios, commits, PR y documentación.
 ## Reglas clave
 - Fortaleza (recluta todo, murallas 1100, 14 torres), aldea (básicas y tiradores, empalizada 90), fortín (no recluta, muralla 400, 5 torres).
 - Asedio: mientras aguanta la muralla, la infantería atacante la golpea (`wallDmg` por tropa; la caballería apenas) y no hace daño; torres y tiradores defensores disparan. Tras la brecha, cuerpo a cuerpo con poca ventaja defensiva.
-- Pueblos: Roma, Galos y Cartago, cuatro papeles cada uno (básica, tiradores, pesada, caballería). Piedra-papel-tijera con `UnitDef.vs`: caballería ×1,8 contra tiradores (y los busca primero), lanzas contra caballería, tiradores contra pesada.
+- Pueblos: Roma, Galos, Cartago y Griegos (macedonios: hoplitas, peltastas, falangitas, hetairoi; especial: argiráspides), cuatro papeles cada uno (básica, tiradores, pesada, caballería). Piedra-papel-tijera con `UnitDef.vs`: caballería ×1,8 contra tiradores (y los busca primero), lanzas contra caballería, tiradores contra pesada.
 - Comida: fortalezas y aldeas producen; cada hombre consume (`upkeep`). Sin comida no se recluta, las tropas desertan y no se reponen. Se pueden licenciar tropas (`disband`).
 - Mapas equilibrados: `po` (2, simetría central), `trinacria` (3) y `cuatro` (4, «Cuatro reinos») con simetría de giro (`buildRotational`); `MapDef.sym` copia la geometría de los caminos para que todas las posiciones sean iguales.
-- Mapas históricos (`MapDef.geo`): `italia`, `sicilia`, `hispania`, `galia`, `africa`. Proyección equirectangular corregida por la latitud. Las ciudades costeras se apartan de la orilla (`inland`) y los caminos que caen al mar se llevan a la costa (`toLand`). La validación exige ciudades y caminos en tierra y una distancia mínima de 100. El terreno dibuja mar, bajíos, playa, ríos con puentes, cordilleras, clima (`med`, `norte`, `arido`) y rótulos; su escala se adapta para no pasar de ~6,5 Mpx.
+- Mapas históricos (`MapDef.geo`): `italia`, `sicilia`, `hispania`, `galia`, `africa`, `grecia`, `britannia`, `aegyptus` (añadir uno: caja y tolerancia en `tools/geo.ts`, regenerar costas, `HistoricDef` en `historic.ts`). Proyección equirectangular corregida por la latitud. Las ciudades costeras se apartan de la orilla (`inland`) y los caminos que caen al mar se llevan a la costa (`toLand`). La validación exige ciudades y caminos en tierra y una distancia mínima de 100. El terreno dibuja mar, bajíos, playa, ríos con puentes, cordilleras, clima (`med`, `norte`, `arido`) y rótulos; su escala se adapta para no pasar de ~6,5 Mpx.
 - Escenarios: `PlayerSetup.owns` reparte plazas por nombre (el primero es el jugador); `name`, `color`, `gold`, `fortLevel` y `generals` personalizan cada bando. Las plazas no repartidas de un mapa histórico son independientes (fortaleza 5+3, aldea 2+1, fortín 3+2).
-- Campaña (`CAMPAIGNS`): Roma (5 capítulos), Cartago (4) y Galos (3). Al ganar, el progreso (`legio-roma:campana`) guarda el siguiente capítulo, el nivel de la capital y hasta 3 generales vivos, que empiezan el siguiente capítulo en la capital.
+- Campaña (`CAMPAIGNS`, por `id`, que es también la clave del progreso guardado): `roma` (5 capítulos), `cartago` (4), `galos` (3), `griegos` «El legado de Alejandro» (5), `roma2` «Roma, señora del mundo» (4) y `galos2` «Celtas contra el mundo» (3). Al ganar, el progreso (`legio-roma:campana`) guarda el siguiente capítulo, el nivel de la capital y hasta 3 generales vivos, que empiezan el siguiente capítulo en la capital.
 - Colores y nombres por bando (`LOOKS`): un pueblo repetido usa otro nombre y color.
 - IA difícil: no se estira (alcance 550) y no ataca con escuadras sueltas. Normal y difícil reúnen ataques de varias plazas y hacen volver ejércitos si su fortaleza peligra. Sin trampas.
 - Pierdes si no te queda ninguna fortaleza; gana el último bando en pie.
@@ -54,6 +54,13 @@ Todo en español: textos del juego, comentarios, commits, PR y documentación.
 - Tropas especiales (fortaleza nivel 3): Pretorianos (Roma), Druidas (+10 % de ataque a su bando), Elefantes de guerra (Cartago, derriban murallas).
 - IA: fácil no mejora; normal ahorra la mitad de la próxima mejora antes de reclutar; difícil solo mejora con lo que le sobra.
 - Guardado v4 (v1 → v2 añade comida; v2 → v3 mejoras, generales y moral; v3 → v4 el mapa simétrico «hispania» pasa a «cuatro»). `GameState.campaign` marca las partidas de campaña; `GameState.history` guarda cada 30 s los hombres de cada bando para la gráfica final.
+
+## Android (M5)
+- Capacitor 8 (`capacitor.config.ts`, `android/`, `webDir: 'dist'`). Tras `npm run build`: `npx cap sync android`.
+- Botón atrás y segundo plano en `App.setupNative()` (`@capacitor/app`): cierra paneles, vuelve al menú guardando, en el menú minimiza; al pasar a segundo plano guarda, pausa y calla el sonido.
+- GitHub Actions (`.github/workflows/android.yml`) compila en cada push (Java 21, `assembleDebug`), firma con la clave de pruebas del repositorio (`android/app/legio-pruebas.jks`, solo para instalar encima sin perder datos) y publica `apk-<rama>` en Releases. `versionCode` = `GITHUB_RUN_NUMBER`.
+- El trabajo `emulador` instala el APK en un emulador y ejecuta `tools/emulador.sh`; capturas, `logcat.txt` y `resumen.txt` van al borrador `e2e-<rama>`. Descárgalos con `gh api .../releases/assets/<id>` (no con `gh release download`, que usa GraphQL).
+- Para Google Play: otra clave de subida guardada como secreto, nunca en el repositorio.
 
 ## Entrega
 - Cada hito en su rama (`m0`, `m1`…) con su PR sobre el anterior; se aceptan en orden.

@@ -1,6 +1,6 @@
 // Tipos del núcleo. Todo es serializable a JSON (sin clases ni funciones).
 
-export type Culture = 'roma' | 'galos' | 'cartago' | 'independientes';
+export type Culture = 'roma' | 'galos' | 'cartago' | 'griegos' | 'independientes';
 export type UnitRole = 'basica' | 'tiradores' | 'pesada' | 'caballeria';
 export type SettlementKind = 'fortaleza' | 'aldea' | 'fortin';
 export type Difficulty = 'facil' | 'normal' | 'dificil';
